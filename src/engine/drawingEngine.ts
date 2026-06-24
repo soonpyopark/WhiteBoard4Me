@@ -765,7 +765,8 @@ export class DrawingEngine {
     this.strokeOptions = options;
     this.strokePreset = preset;
     this.redraw();
-    if (options.tool !== 'highlighter' && options.tool !== 'pencil') {
+    const isEraserStroke = options.tool === 'eraser' && options.eraserMode === 'stroke';
+    if (options.tool !== 'highlighter' && options.tool !== 'pencil' && !isEraserStroke) {
       this.renderPreviewDot(point, options, preset);
     }
   }
@@ -775,7 +776,13 @@ export class DrawingEngine {
 
     this.strokePoints.push(point);
 
-    if (this.strokeOptions.tool === 'highlighter' || this.strokeOptions.tool === 'pencil') {
+    const isEraserStroke =
+      this.strokeOptions.tool === 'eraser' && this.strokeOptions.eraserMode === 'stroke';
+    if (
+      this.strokeOptions.tool === 'highlighter' ||
+      this.strokeOptions.tool === 'pencil' ||
+      isEraserStroke
+    ) {
       this.redraw();
       return;
     }
@@ -1325,13 +1332,8 @@ export class DrawingEngine {
     ctx.scale(this.viewScale, this.viewScale);
 
     if (options.tool === 'eraser') {
-      if (options.eraserMode === 'stroke') {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = 'rgba(120, 120, 120, 0.35)';
-      } else {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.fillStyle = 'rgba(0,0,0,1)';
-      }
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,1)';
     } else {
       ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = options.color;

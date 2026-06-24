@@ -1,3 +1,7 @@
+import {
+  ERASER_STROKE_PREVIEW_COLOR,
+  ERASER_STROKE_PREVIEW_OPACITY,
+} from '../eraserSettings';
 import { pressureToWidth } from './pressure';
 import { smoothStrokePoints } from './pathObject';
 import type { DrawingOptions, EraserMode, PathObject, StrokePoint, ToolPreset } from './types';
@@ -16,19 +20,14 @@ function paintDab(
   opacity: number,
   textured: boolean,
   seed: number,
-  eraserMode: EraserMode = 'partial',
+  _eraserMode: EraserMode = 'partial',
 ): void {
   const radius = width / 2;
   ctx.save();
 
   if (tool === 'eraser') {
-    if (eraserMode === 'stroke') {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(120, 120, 120, 0.35)';
-    } else {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = 'rgba(0,0,0,1)';
-    }
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = 'rgba(0,0,0,1)';
   } else {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = color;
@@ -425,6 +424,18 @@ export function renderLiveStroke(
       smoothStrokePoints(fakePath.points),
       fakePath.color,
       fakePath.opacity,
+      fakePath.baseWidth,
+    );
+    ctx.restore();
+    return;
+  }
+
+  if (fakePath.tool === 'eraser' && eraserMode === 'stroke') {
+    renderHighlighterStroke(
+      ctx,
+      smoothStrokePoints(fakePath.points),
+      ERASER_STROKE_PREVIEW_COLOR,
+      ERASER_STROKE_PREVIEW_OPACITY,
       fakePath.baseWidth,
     );
     ctx.restore();

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { useAnchoredPopoverPosition } from '../hooks/useAnchoredPopoverPosition';
 import { ERASER_MODE_OPTIONS, type EraserSettings } from '../eraserSettings';
 
 interface EraserOptionsPopoverProps {
@@ -15,28 +17,10 @@ export function EraserOptionsPopover({
   onClose,
 }: EraserOptionsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
-
-  useEffect(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-
-    const updatePosition = () => {
-      const rect = anchor.getBoundingClientRect();
-      setStyle({
-        left: rect.left + rect.width / 2,
-        top: rect.bottom + 8,
-      });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [anchorRef]);
+  const popoverStyle = useAnchoredPopoverPosition(anchorRef, popoverRef, true, [settings.mode], {
+    fallbackWidth: 160,
+    fallbackHeight: 120,
+  });
 
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
@@ -66,11 +50,11 @@ export function EraserOptionsPopover({
     return () => popover.removeEventListener('focusout', handleFocusOut);
   }, [anchorRef, onClose]);
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
       className="tool-options-popover eraser-options-popover"
-      style={{ left: style.left, top: style.top }}
+      style={popoverStyle}
       role="dialog"
       aria-label="지우개 설정"
     >
@@ -88,6 +72,7 @@ export function EraserOptionsPopover({
           </button>
         ))}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

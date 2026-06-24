@@ -61,9 +61,9 @@ export const TOOL_PRESETS: Record<DrawTool, ToolPreset> = {
   },
   highlighter: {
     opacity: 0.2,
-    baseWidth: 40,
-    minWidth: 40,
-    maxWidth: 40,
+    baseWidth: 20,
+    minWidth: 20,
+    maxWidth: 20,
     textured: false,
   },
   eraser: {

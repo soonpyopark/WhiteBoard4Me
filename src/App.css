@@ -478,7 +478,6 @@
 
 .tool-options-popover {
   position: fixed;
-  transform: translateX(-50%);
   z-index: 200;
   width: 220px;
   padding: 0.875rem;
@@ -785,9 +784,6 @@
   color: #323130;
 }
 
-.drawing-canvas.text-mode {
-  cursor: text;
-}
 
 .drawing-canvas {
   display: block;
@@ -801,31 +797,26 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.drawing-canvas.select-mode {
+/* OS 기본 커서 — 표준 CSS cursor 키워드 */
+.drawing-canvas.cursor-hand,
+.drawing-canvas.cursor-pan {
+  cursor: grab;
+}
+
+.drawing-canvas.cursor-select {
   cursor: default;
 }
 
-.drawing-canvas.lasso-mode {
+.drawing-canvas.cursor-lasso,
+.drawing-canvas.cursor-crosshair {
   cursor: crosshair;
 }
 
-.drawing-canvas.hand-mode {
-  cursor: grab;
+.drawing-canvas.cursor-text {
+  cursor: text;
 }
 
-.drawing-canvas.hand-mode:active {
-  cursor: grabbing;
-}
-
-.drawing-canvas.space-pan-mode {
-  cursor: grab;
-}
-
-.drawing-canvas.space-pan-mode:active {
-  cursor: grabbing;
-}
-
-.drawing-canvas.brush-preview-mode {
+.drawing-canvas.cursor-brush {
   cursor: none;
 }
 

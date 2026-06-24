@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { useAnchoredPopoverPosition } from '../hooks/useAnchoredPopoverPosition';
 import {
   isPresetTextFont,
   MAIN_COLOR_PALETTE,
@@ -27,6 +29,8 @@ function sliderFill(value: number, min: number, max: number): string {
   return `${((value - min) / (max - min)) * 100}%`;
 }
 
+const LONG_PRESS_MS = 500;
+
 export function TextOptionsPopover({
   settings,
   onChange,
@@ -36,66 +40,50 @@ export function TextOptionsPopover({
   onClose,
 }: TextOptionsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<{ left: number; top: number; transform?: string }>({
-    left: 0,
-    top: 0,
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const popoverStyle = useAnchoredPopoverPosition(anchorRef, popoverRef, open, [settings.fontSize], {
+    fallbackWidth: 260,
+    fallbackHeight: 320,
   });
 
-  useEffect(() => {
-    if (!open) return;
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
 
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-
-    const padding = 8;
-    const gap = 8;
-
-    const updatePosition = () => {
-      const currentAnchor = anchorRef.current;
-      const popover = popoverRef.current;
-      if (!currentAnchor) return;
-
-      const rect = currentAnchor.getBoundingClientRect();
-
-      const popoverWidth = popover?.offsetWidth ?? 260;
-      const popoverHeight = popover?.offsetHeight ?? 320;
-
-      let centerX = rect.left + rect.width / 2;
-      let top = rect.bottom + gap;
-
-      const halfW = popoverWidth / 2;
-      centerX = Math.max(padding + halfW, Math.min(window.innerWidth - padding - halfW, centerX));
-
-      if (top + popoverHeight > window.innerHeight - padding) {
-        const aboveTop = rect.top - popoverHeight - gap;
-        top = aboveTop >= padding ? aboveTop : Math.max(padding, window.innerHeight - popoverHeight - padding);
-      }
-
-      setStyle({
-        left: centerX,
-        top,
-        transform: 'translateX(-50%)',
-      });
-    };
-
-    updatePosition();
-    const frame = window.requestAnimationFrame(updatePosition);
-
-    const observer =
-      placement === 'editor' && typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(updatePosition)
-        : null;
-    observer?.observe(anchor);
-
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [anchorRef, open, placement, settings.fontSize]);
+  const getColorSwatchHandlers = useCallback(
+    (color: string) => ({
+      onClick: () => {
+        if (longPressTriggeredRef.current) {
+          longPressTriggeredRef.current = false;
+          return;
+        }
+        onChange({ color });
+      },
+      onDoubleClick: () => {
+        onChange({ color });
+        onClose();
+      },
+      onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        longPressTriggeredRef.current = false;
+        clearLongPressTimer();
+        longPressTimerRef.current = window.setTimeout(() => {
+          longPressTimerRef.current = null;
+          longPressTriggeredRef.current = true;
+          onChange({ color });
+          onClose();
+        }, LONG_PRESS_MS);
+      },
+      onPointerUp: () => clearLongPressTimer(),
+      onPointerCancel: () => clearLongPressTimer(),
+      onPointerLeave: () => clearLongPressTimer(),
+    }),
+    [clearLongPressTimer, onChange, onClose],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -125,6 +113,8 @@ export function TextOptionsPopover({
     };
   }, [anchorRef, onClose, open, placement]);
 
+  useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
   if (!open) return null;
 
   const keepEditorFocus = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -135,15 +125,11 @@ export function TextOptionsPopover({
     e.preventDefault();
   };
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
       className={`tool-options-popover text-options-popover ${placement === 'editor' ? 'text-options-popover--editor' : ''}`}
-      style={{
-        left: style.left,
-        top: style.top,
-        transform: style.transform,
-      }}
+      style={popoverStyle}
       role="dialog"
       aria-label="텍스트 옵션"
       onMouseDown={placement === 'editor' ? keepEditorFocus : undefined}
@@ -206,9 +192,10 @@ export function TextOptionsPopover({
             type="button"
             className={`tool-options-color ${settings.color === c ? 'active' : ''}`}
             style={swatchStyle(c)}
-            onClick={() => onChange({ color: c })}
             title={c}
             aria-label={`색상 ${c}`}
+            aria-pressed={settings.color === c}
+            {...getColorSwatchHandlers(c)}
           />
         ))}
         <label className="tool-options-color tool-options-color--picker" title="사용자 색상">
@@ -223,6 +210,7 @@ export function TextOptionsPopover({
           </span>
         </label>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

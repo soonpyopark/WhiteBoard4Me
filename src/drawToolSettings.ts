@@ -14,7 +14,7 @@ export const DRAW_SETTINGS_TOOLS: DrawSettingsTool[] = ['pencil', 'pen', 'highli
 export const HIGHLIGHTER_SIZE_MIN = 10;
 export const HIGHLIGHTER_SIZE_MAX = 80;
 export const HIGHLIGHTER_SIZE_STEP = 5;
-export const HIGHLIGHTER_DEFAULT_SIZE = 40;
+export const HIGHLIGHTER_DEFAULT_SIZE = 20;
 export const HIGHLIGHTER_DEFAULT_OPACITY = 20;
 
 export const OPACITY_STEP = 10;

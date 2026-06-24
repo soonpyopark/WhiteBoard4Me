@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { useAnchoredPopoverPosition } from '../hooks/useAnchoredPopoverPosition';
 import type { LineEndStyle } from '../engine/types';
 import {
   HIGHLIGHTER_SIZE_MAX,
@@ -84,7 +86,10 @@ export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClos
   const customInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
-  const [style, setStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const isHighlighter = tool === 'highlighter';
+  const popoverStyle = useAnchoredPopoverPosition(anchorRef, popoverRef, true, [tool, isHighlighter], {
+    fallbackHeight: isHighlighter ? 240 : 320,
+  });
 
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current !== null) {
@@ -125,27 +130,6 @@ export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClos
   );
 
   useEffect(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-
-    const updatePosition = () => {
-      const rect = anchor.getBoundingClientRect();
-      setStyle({
-        left: rect.left + rect.width / 2,
-        top: rect.bottom + 8,
-      });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [anchorRef]);
-
-  useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (popoverRef.current?.contains(target)) return;
@@ -178,7 +162,6 @@ export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClos
   const sliderFill = (value: number, min: number, max: number) =>
     `${((value - min) / (max - min)) * 100}%`;
 
-  const isHighlighter = tool === 'highlighter';
   const thicknessMin = isHighlighter ? HIGHLIGHTER_SIZE_MIN : 1;
   const thicknessMax = isHighlighter ? HIGHLIGHTER_SIZE_MAX : 6;
   const thicknessStep = isHighlighter ? HIGHLIGHTER_SIZE_STEP : 1;
@@ -187,11 +170,11 @@ export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClos
     : settings.thickness;
   const opacityValue = snapOpacity(settings.opacity);
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
       className="tool-options-popover"
-      style={{ left: style.left, top: style.top }}
+      style={popoverStyle}
       role="dialog"
       aria-label="도구 설정"
     >
@@ -338,6 +321,7 @@ export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClos
           </span>
         </label>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

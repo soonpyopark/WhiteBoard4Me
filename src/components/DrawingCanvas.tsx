@@ -9,6 +9,10 @@ import type { DrawingOptions, HandleId, ImageObject, PathObject, StrokePoint, Te
 import { TOOL_PRESETS } from '../engine/types';
 import { drawSettingsToOptions, isDrawSettingsTool, type DrawToolSettings } from '../drawToolSettings';
 import type { EraserSettings } from '../eraserSettings';
+import {
+  ERASER_STROKE_PREVIEW_COLOR,
+  ERASER_STROKE_PREVIEW_OPACITY,
+} from '../eraserSettings';
 import { SceneLayerMenu } from './SceneLayerMenu';
 import { TextOptionsPopover } from './TextOptionsPopover';
 import { ZoomControls } from './ZoomControls';
@@ -99,6 +103,28 @@ function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/** OS 기본 커서용 CSS 클래스 (표준 cursor 키워드와 1:1) */
+function getToolCursorClass(tool: Tool, spaceHeld: boolean): string {
+  if (spaceHeld) return 'cursor-pan';
+  switch (tool) {
+    case 'hand':
+      return 'cursor-hand';
+    case 'select':
+      return 'cursor-select';
+    case 'lasso':
+      return 'cursor-lasso';
+    case 'text':
+      return 'cursor-text';
+    case 'pencil':
+    case 'pen':
+    case 'highlighter':
+    case 'eraser':
+      return 'cursor-brush';
+    default:
+      return 'cursor-crosshair';
+  }
+}
+
 export function DrawingCanvas({
   tool,
   drawSettings,
@@ -133,6 +159,27 @@ export function DrawingCanvas({
   const [textEditSession, setTextEditSession] = useState<TextEditSession | null>(null);
   const textDraftRef = useRef('');
   const [layerMenu, setLayerMenu] = useState<{ x: number; y: number } | null>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+
+  const isSelectMode = tool === 'select';
+  const isLassoMode = tool === 'lasso';
+  const isHandMode = tool === 'hand';
+  const isEraserMode = tool === 'eraser';
+  const isAimTool = tool === 'pencil' || tool === 'pen';
+  const isCircleBrushTool = tool === 'highlighter' || tool === 'eraser';
+  const useBrushOverlay = (isAimTool || isCircleBrushTool) && !spaceHeld && !textEditSession;
+  const isImageMode = tool === 'image';
+  const isTextMode = tool === 'text';
+  const toolCursorClass = getToolCursorClass(tool, spaceHeld);
+  const usesHoverCursor = isSelectMode || isHandMode || spaceHeld;
+  const brushCursorRef = useRef<HTMLDivElement>(null);
+  const lastScreenPointRef = useRef<{ x: number; y: number } | null>(null);
+  const spaceHeldRef = useRef(false);
+  const spacePanRef = useRef(false);
+  const twoFingerPanRef = useRef(false);
+  const touchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pendingPanScreenRef = useRef<{ x: number; y: number } | null>(null);
+  const panRafRef = useRef<number | null>(null);
 
   const longPressTimerRef = useRef<number | null>(null);
   const longPressClientRef = useRef<{ x: number; y: number } | null>(null);
@@ -141,25 +188,6 @@ export function DrawingCanvas({
   const pendingScreenRef = useRef<{ x: number; y: number } | null>(null);
   const pendingPointerKindRef = useRef<PendingPointerKind>('idle');
   const activePenPointerCountRef = useRef(0);
-
-  const isSelectMode = tool === 'select';
-  const isLassoMode = tool === 'lasso';
-  const isHandMode = tool === 'hand';
-  const isEraserMode = tool === 'eraser';
-  const isDrawBrushTool = isDrawSettingsTool(tool);
-  const showBrushPreview = isEraserMode || isDrawBrushTool;
-  const isImageMode = tool === 'image';
-  const isTextMode = tool === 'text';
-  const isSelectionTool = isSelectMode || isLassoMode;
-  const brushCursorRef = useRef<HTMLDivElement>(null);
-  const lastScreenPointRef = useRef<{ x: number; y: number } | null>(null);
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const spaceHeldRef = useRef(false);
-  const spacePanRef = useRef(false);
-  const twoFingerPanRef = useRef(false);
-  const touchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pendingPanScreenRef = useRef<{ x: number; y: number } | null>(null);
-  const panRafRef = useRef<number | null>(null);
 
   const getTouchCentroid = useCallback((): { x: number; y: number } | null => {
     const points = [...touchPointersRef.current.values()];
@@ -297,13 +325,15 @@ export function DrawingCanvas({
   const getDrawOptions = useCallback((): DrawingOptions => {
     if (tool === 'eraser') {
       const preset = TOOL_PRESETS.eraser;
+      const isStrokeMode = eraserSettings.mode === 'stroke';
+      const baseWidth = preset.baseWidth;
       return {
         tool: 'eraser',
-        color: '#000000',
-        baseWidth: preset.baseWidth,
-        minWidth: preset.minWidth,
-        maxWidth: preset.maxWidth,
-        opacity: preset.opacity,
+        color: ERASER_STROKE_PREVIEW_COLOR,
+        baseWidth,
+        minWidth: isStrokeMode ? baseWidth : preset.minWidth,
+        maxWidth: isStrokeMode ? baseWidth : preset.maxWidth,
+        opacity: isStrokeMode ? ERASER_STROKE_PREVIEW_OPACITY : preset.opacity,
         lineEnd: 'plain',
         eraserMode: eraserSettings.mode,
       };
@@ -333,15 +363,6 @@ export function DrawingCanvas({
       lineEnd: opts.lineEnd,
     };
   }, [tool, drawSettings, eraserSettings.mode]);
-
-  const getCursorTool = (): 'select' | 'lasso' | 'hand' | 'draw' | 'image' | 'text' => {
-    if (spaceHeld || isHandMode) return 'hand';
-    if (isLassoMode) return 'lasso';
-    if (isSelectMode) return 'select';
-    if (isImageMode) return 'image';
-    if (isTextMode) return 'text';
-    return 'draw';
-  };
 
   const openTextEditor = useCallback(
     (text: TextObject | null, x?: number, y?: number) => {
@@ -524,7 +545,7 @@ export function DrawingCanvas({
       const pt = lastScreenPointRef.current;
       const dot = el?.querySelector<HTMLElement>('.brush-cursor__dot');
 
-      if (!el || !dot || !showBrushPreview || textEditSession) {
+      if (!el || !dot || !useBrushOverlay) {
         if (el) el.style.display = 'none';
         return;
       }
@@ -534,7 +555,6 @@ export function DrawingCanvas({
         return;
       }
 
-      const isAimTool = tool === 'pencil' || tool === 'pen';
       const diameter = getBrushDiameter(engine);
 
       el.classList.toggle('brush-cursor--aim', isAimTool);
@@ -548,7 +568,10 @@ export function DrawingCanvas({
 
       if (isEraserMode) {
         dot.style.opacity = '1';
-        dot.style.backgroundColor = 'transparent';
+        dot.style.backgroundColor = colorWithAlpha(
+          ERASER_STROKE_PREVIEW_COLOR,
+          ERASER_STROKE_PREVIEW_OPACITY,
+        );
         dot.style.borderColor = 'rgba(70, 70, 80, 0.85)';
         return;
       }
@@ -559,10 +582,64 @@ export function DrawingCanvas({
       dot.style.borderColor =
         opts.color.toLowerCase() === '#ffffff' ? 'rgba(70, 70, 80, 0.85)' : opts.color;
     },
-    [drawSettings, getBrushDiameter, showBrushPreview, textEditSession, tool, isEraserMode],
+    [drawSettings, getBrushDiameter, isAimTool, isEraserMode, tool, useBrushOverlay],
   );
   const syncBrushCursorRef = useRef(syncBrushCursor);
   syncBrushCursorRef.current = syncBrushCursor;
+
+  const updateCanvasCursor = useCallback(
+    (engine: DrawingEngine, world: { x: number; y: number }) => {
+      const canvas = canvasRef.current;
+      if (!canvas || textEditSession) return;
+
+      if (!usesHoverCursor) {
+        canvas.style.removeProperty('cursor');
+        return;
+      }
+
+      let cursorTool: 'select' | 'lasso' | 'hand' | 'draw' | 'image' | 'text' = 'draw';
+      if (spaceHeld || isHandMode) cursorTool = 'hand';
+      else if (isLassoMode) cursorTool = 'lasso';
+      else if (isSelectMode) cursorTool = 'select';
+      else if (isImageMode) cursorTool = 'image';
+      else if (isTextMode) cursorTool = 'text';
+
+      const isPanning = modeRef.current === 'pan' && activePointerRef.current !== null;
+      canvas.style.cursor = engine.getCursorHint(
+        world.x,
+        world.y,
+        cursorTool,
+        isPanning,
+      );
+    },
+    [
+      isHandMode,
+      isImageMode,
+      isLassoMode,
+      isSelectMode,
+      isTextMode,
+      spaceHeld,
+      textEditSession,
+      usesHoverCursor,
+    ],
+  );
+  const updateCanvasCursorRef = useRef(updateCanvasCursor);
+  updateCanvasCursorRef.current = updateCanvasCursor;
+
+  const updatePointerPresentation = useCallback(
+    (engine: DrawingEngine, world: { x: number; y: number }) => {
+      if (useBrushOverlay) {
+        canvasRef.current?.style.removeProperty('cursor');
+        syncBrushCursor(true);
+        return;
+      }
+      syncBrushCursor(false);
+      updateCanvasCursor(engine, world);
+    },
+    [syncBrushCursor, updateCanvasCursor, useBrushOverlay],
+  );
+  const updatePointerPresentationRef = useRef(updatePointerPresentation);
+  updatePointerPresentationRef.current = updatePointerPresentation;
 
   const placeImageFiles = useCallback(
     async (files: File[], clientX: number, clientY: number) => {
@@ -647,12 +724,20 @@ export function DrawingCanvas({
   }, [engineReady]);
 
   useEffect(() => {
-    if (!showBrushPreview) {
-      syncBrushCursor(false);
-      return;
+    canvasRef.current?.style.removeProperty('cursor');
+
+    if (tool !== 'hand' && (modeRef.current === 'pan' || engineRef.current?.isPanning())) {
+      flushPanUpdate();
+      engineRef.current?.endPan();
+      resetActivePointer();
     }
-    syncBrushCursor(lastScreenPointRef.current !== null);
-  }, [showBrushPreview, tool, drawSettings, syncBrushCursor]);
+
+    if (useBrushOverlay && lastScreenPointRef.current) {
+      syncBrushCursor(true);
+    } else {
+      syncBrushCursor(false);
+    }
+  }, [flushPanUpdate, resetActivePointer, syncBrushCursor, tool, useBrushOverlay, drawSettings]);
 
   useEffect(() => {
     if (textEditSession) {
@@ -966,20 +1051,17 @@ export function DrawingCanvas({
       touchPointersRef.current.set(e.pointerId, screen);
     }
 
-    if (showBrushPreview) {
-      lastScreenPointRef.current = { x: screen.x, y: screen.y };
-      syncBrushCursor(true);
+    lastScreenPointRef.current = { x: screen.x, y: screen.y };
+
+    if (activePointerRef.current === null) {
+      updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
+    } else if (useBrushOverlay) {
+      syncBrushCursorRef.current(false);
+    } else if (usesHoverCursor) {
+      updateCanvasCursorRef.current(engine, { x: world.x, y: world.y });
     }
 
     if (activePointerRef.current === null) {
-      if (!showBrushPreview) {
-        canvasRef.current!.style.cursor = engine.getCursorHint(
-          world.x,
-          world.y,
-          getCursorTool(),
-          modeRef.current === 'pan',
-        );
-      }
       return;
     }
 
@@ -1108,15 +1190,18 @@ export function DrawingCanvas({
     twoFingerPanRef.current = false;
     spacePanRef.current = false;
 
-    if (showBrushPreview) {
-      lastScreenPointRef.current = toScreenPoint(e);
-      syncBrushCursorRef.current(true);
+    const screen = toScreenPoint(e);
+    lastScreenPointRef.current = { x: screen.x, y: screen.y };
+    const world = engine?.screenToWorld(screen.x, screen.y);
+    if (engine && world) {
+      updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
     }
   };
 
   const handlePointerLeave = () => {
     lastScreenPointRef.current = null;
     syncBrushCursor(false);
+    canvasRef.current?.style.removeProperty('cursor');
     cancelLongPress();
   };
 
@@ -1136,10 +1221,15 @@ export function DrawingCanvas({
   };
 
   const handlePointerEnter = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!showBrushPreview) return;
-    const screen = toScreenPoint(e);
-    lastScreenPointRef.current = { x: screen.x, y: screen.y };
-    syncBrushCursor(true);
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    const world = toWorldPoint(e, engine);
+    lastScreenPointRef.current = toScreenPoint(e);
+
+    if (activePointerRef.current === null) {
+      updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
+    }
   };
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1177,7 +1267,7 @@ export function DrawingCanvas({
       />
       <canvas
         ref={canvasRef}
-        className={`drawing-canvas ${isSelectionTool ? 'select-mode' : ''} ${isHandMode ? 'hand-mode' : ''} ${isLassoMode ? 'lasso-mode' : ''} ${showBrushPreview ? 'brush-preview-mode' : ''} ${spaceHeld ? 'space-pan-mode' : ''} ${isImageMode ? 'image-mode' : ''} ${isTextMode ? 'text-mode' : ''}`}
+        className={`drawing-canvas ${toolCursorClass}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}

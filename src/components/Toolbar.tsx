@@ -201,46 +201,47 @@ export function Toolbar({
   const drawAnchorRef = useRef<HTMLButtonElement | null>(null);
   const eraserAnchorRef = useRef<HTMLButtonElement | null>(null);
   const textAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const showDrawOptions = isDrawSettingsTool(tool) && drawOptionsOpen;
   const showEraserOptions = tool === 'eraser' && drawOptionsOpen;
   const showTextOptions = tool === 'text' && drawOptionsOpen && textOptionsPlacement === 'toolbar';
 
   return (
     <header className="editor-toolbar">
-      <div className="editor-toolbar__nav">
+      <div className="editor-toolbar__leading">
         <button type="button" className="back-btn" onClick={onBack}>
           ← 갤러리
         </button>
-        {editingTitle ? (
-          <input
-            ref={titleInputRef}
-            type="text"
-            className="editor-doc-title-input"
-            value={draftTitle}
-            onChange={(e) => onDraftTitleChange(e.target.value)}
-            onBlur={onCommitTitle}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onCommitTitle();
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                onCancelEditTitle();
-              }
-            }}
-            aria-label="화이트보드 제목"
-          />
-        ) : (
-          <button
-            type="button"
-            className="editor-doc-title"
-            onClick={onStartEditTitle}
-            title="클릭하여 이름 변경"
-          >
-            {title}
-          </button>
-        )}
+        <div className="editor-toolbar__title">
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              type="text"
+              className="editor-doc-title-input"
+              value={draftTitle}
+              onChange={(e) => onDraftTitleChange(e.target.value)}
+              onBlur={onCommitTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  onCommitTitle();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  onCancelEditTitle();
+                }
+              }}
+              aria-label="화이트보드 제목"
+            />
+          ) : (
+            <button
+              type="button"
+              className="editor-doc-title"
+              onClick={onStartEditTitle}
+              title={title}
+            >
+              {title}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="editor-toolbar__center">
@@ -303,8 +304,9 @@ export function Toolbar({
             ))}
           </div>
 
-          {showDrawOptions && (
+          {isDrawSettingsTool(tool) && drawOptionsOpen && (
             <ToolOptionsPopover
+              tool={tool}
               settings={drawSettings}
               onChange={onDrawSettingsChange}
               anchorRef={drawAnchorRef}

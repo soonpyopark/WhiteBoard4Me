@@ -1,8 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LineEndStyle } from '../engine/types';
-import { MAIN_COLOR_PALETTE, QUICK_COLORS, type DrawToolSettings } from '../drawToolSettings';
+import {
+  HIGHLIGHTER_SIZE_MAX,
+  HIGHLIGHTER_SIZE_MIN,
+  HIGHLIGHTER_SIZE_STEP,
+  MAIN_COLOR_PALETTE,
+  OPACITY_STEP,
+  QUICK_COLORS,
+  snapHighlighterSize,
+  snapOpacity,
+  type DrawSettingsTool,
+  type DrawToolSettings,
+} from '../drawToolSettings';
 
 interface ToolOptionsPopoverProps {
+  tool: DrawSettingsTool;
   settings: DrawToolSettings;
   onChange: (patch: Partial<DrawToolSettings>) => void;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
@@ -59,16 +71,58 @@ const LINE_END_OPTIONS: { id: LineEndStyle; label: string; Icon: typeof PlainLin
   { id: 'arrow-both', label: '양쪽 화살표', Icon: ArrowBothIcon },
 ];
 
+const LONG_PRESS_MS = 500;
+
 function swatchStyle(color: string): React.CSSProperties {
   return color === '#ffffff'
     ? { backgroundColor: color, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.12)' }
     : { backgroundColor: color };
 }
 
-export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: ToolOptionsPopoverProps) {
+export function ToolOptionsPopover({ tool, settings, onChange, anchorRef, onClose }: ToolOptionsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLInputElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
   const [style, setStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const getColorSwatchHandlers = useCallback(
+    (color: string) => ({
+      onClick: () => {
+        if (longPressTriggeredRef.current) {
+          longPressTriggeredRef.current = false;
+          return;
+        }
+        onChange({ color });
+      },
+      onDoubleClick: () => {
+        onChange({ color });
+        onClose();
+      },
+      onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        longPressTriggeredRef.current = false;
+        clearLongPressTimer();
+        longPressTimerRef.current = window.setTimeout(() => {
+          longPressTimerRef.current = null;
+          longPressTriggeredRef.current = true;
+          onChange({ color });
+          onClose();
+        }, LONG_PRESS_MS);
+      },
+      onPointerUp: () => clearLongPressTimer(),
+      onPointerCancel: () => clearLongPressTimer(),
+      onPointerLeave: () => clearLongPressTimer(),
+    }),
+    [clearLongPressTimer, onChange, onClose],
+  );
 
   useEffect(() => {
     const anchor = anchorRef.current;
@@ -103,6 +157,8 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [anchorRef, onClose]);
 
+  useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
   useEffect(() => {
     const popover = popoverRef.current;
     if (!popover) return;
@@ -122,6 +178,15 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
   const sliderFill = (value: number, min: number, max: number) =>
     `${((value - min) / (max - min)) * 100}%`;
 
+  const isHighlighter = tool === 'highlighter';
+  const thicknessMin = isHighlighter ? HIGHLIGHTER_SIZE_MIN : 1;
+  const thicknessMax = isHighlighter ? HIGHLIGHTER_SIZE_MAX : 6;
+  const thicknessStep = isHighlighter ? HIGHLIGHTER_SIZE_STEP : 1;
+  const thicknessValue = isHighlighter
+    ? snapHighlighterSize(settings.thickness)
+    : settings.thickness;
+  const opacityValue = snapOpacity(settings.opacity);
+
   return (
     <div
       ref={popoverRef}
@@ -135,23 +200,23 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
           className="tool-options-slider-track"
           style={
             {
-              '--fill': sliderFill(settings.thickness, 1, 6),
+              '--fill': sliderFill(thicknessValue, thicknessMin, thicknessMax),
               '--track-color': settings.color,
             } as React.CSSProperties
           }
         >
           <input
             type="range"
-            min={1}
-            max={6}
-            step={1}
-            value={settings.thickness}
+            min={thicknessMin}
+            max={thicknessMax}
+            step={thicknessStep}
+            value={thicknessValue}
             onChange={(e) => onChange({ thickness: Number(e.target.value) })}
             className="tool-options-slider"
-            aria-label="굵기"
+            aria-label={isHighlighter ? '브러시 크기' : '굵기'}
           />
         </div>
-        <span className="tool-options-value">{settings.thickness}</span>
+        <span className="tool-options-value">{thicknessValue}</span>
       </div>
 
       <div className="tool-options-row">
@@ -159,7 +224,7 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
           className="tool-options-slider-track tool-options-slider-track--opacity"
           style={
             {
-              '--fill': sliderFill(settings.opacity, 0, 100),
+              '--fill': sliderFill(opacityValue, 0, 100),
               '--track-color': settings.color,
             } as React.CSSProperties
           }
@@ -168,8 +233,8 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
             type="range"
             min={0}
             max={100}
-            step={1}
-            value={settings.opacity}
+            step={OPACITY_STEP}
+            value={opacityValue}
             onChange={(e) => onChange({ opacity: Number(e.target.value) })}
             className="tool-options-slider"
             aria-label="투명도"
@@ -179,16 +244,17 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
           type="number"
           min={0}
           max={100}
-          value={settings.opacity}
+          value={opacityValue}
           onChange={(e) => {
             const next = Number.parseInt(e.target.value, 10);
-            if (Number.isFinite(next)) onChange({ opacity: Math.min(100, Math.max(0, next)) });
+            if (Number.isFinite(next)) onChange({ opacity: snapOpacity(next) });
           }}
           className="tool-options-number"
           aria-label="투명도 퍼센트"
         />
       </div>
 
+      {!isHighlighter && (
       <div className="tool-options-line-ends" role="group" aria-label="선 끝 모양">
         {LINE_END_OPTIONS.map(({ id, label, Icon }) => (
           <button
@@ -204,6 +270,7 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
           </button>
         ))}
       </div>
+      )}
 
       <div className="tool-options-quick-colors">
         <button
@@ -229,9 +296,9 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
             type="button"
             className="tool-options-color"
             style={swatchStyle(c)}
-            onClick={() => onChange({ color: c })}
             title={c}
             aria-label={`색상 ${c}`}
+            {...getColorSwatchHandlers(c)}
           />
         ))}
       </div>
@@ -252,10 +319,10 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
             type="button"
             className={`tool-options-color ${settings.color === c ? 'active' : ''}`}
             style={swatchStyle(c)}
-            onClick={() => onChange({ color: c })}
             title={c}
             aria-label={`색상 ${c}`}
             aria-pressed={settings.color === c}
+            {...getColorSwatchHandlers(c)}
           />
         ))}
         <label className="tool-options-color tool-options-color--picker" title="사용자 색상">

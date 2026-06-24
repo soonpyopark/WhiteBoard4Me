@@ -101,6 +101,7 @@ export function WhiteboardCard({
             type="button"
             className="card-title-btn"
             onClick={() => onOpen(board.id)}
+            title={board.title}
           >
             <span className="card-title">{board.title}</span>
             <span className="card-date">{formatEditedDate(board.updatedAt)}</span>

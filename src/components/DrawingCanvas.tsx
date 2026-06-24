@@ -90,6 +90,15 @@ function shouldIgnoreTouchForDraw(tool: Tool, pointerType: string, activePenCoun
   return isDrawTool(tool) && pointerType === 'touch' && activePenCount > 0;
 }
 
+function colorWithAlpha(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) return hex;
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export function DrawingCanvas({
   tool,
   drawSettings,
@@ -137,11 +146,59 @@ export function DrawingCanvas({
   const isLassoMode = tool === 'lasso';
   const isHandMode = tool === 'hand';
   const isEraserMode = tool === 'eraser';
+  const isDrawBrushTool = isDrawSettingsTool(tool);
+  const showBrushPreview = isEraserMode || isDrawBrushTool;
   const isImageMode = tool === 'image';
   const isTextMode = tool === 'text';
   const isSelectionTool = isSelectMode || isLassoMode;
-  const eraserCursorRef = useRef<HTMLDivElement>(null);
+  const brushCursorRef = useRef<HTMLDivElement>(null);
   const lastScreenPointRef = useRef<{ x: number; y: number } | null>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceHeldRef = useRef(false);
+  const spacePanRef = useRef(false);
+  const twoFingerPanRef = useRef(false);
+  const touchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pendingPanScreenRef = useRef<{ x: number; y: number } | null>(null);
+  const panRafRef = useRef<number | null>(null);
+
+  const getTouchCentroid = useCallback((): { x: number; y: number } | null => {
+    const points = [...touchPointersRef.current.values()];
+    if (points.length === 0) return null;
+    let x = 0;
+    let y = 0;
+    for (const point of points) {
+      x += point.x;
+      y += point.y;
+    }
+    return { x: x / points.length, y: y / points.length };
+  }, []);
+
+  const flushPanUpdate = useCallback(() => {
+    if (panRafRef.current !== null) {
+      cancelAnimationFrame(panRafRef.current);
+      panRafRef.current = null;
+    }
+    const pending = pendingPanScreenRef.current;
+    if (pending) {
+      engineRef.current?.updatePan(pending.x, pending.y);
+      pendingPanScreenRef.current = null;
+    }
+  }, [engineRef]);
+
+  const schedulePanUpdate = useCallback(
+    (screenX: number, screenY: number) => {
+      pendingPanScreenRef.current = { x: screenX, y: screenY };
+      if (panRafRef.current !== null) return;
+      panRafRef.current = requestAnimationFrame(() => {
+        panRafRef.current = null;
+        const pending = pendingPanScreenRef.current;
+        if (!pending) return;
+        engineRef.current?.updatePan(pending.x, pending.y);
+        pendingPanScreenRef.current = null;
+      });
+    },
+    [engineRef],
+  );
 
   const cancelLongPress = useCallback(() => {
     if (longPressTimerRef.current !== null) {
@@ -149,6 +206,17 @@ export function DrawingCanvas({
       longPressTimerRef.current = null;
     }
   }, []);
+
+  const startPanInteraction = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>, screen: { x: number; y: number }) => {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      activePointerRef.current = e.pointerId;
+      modeRef.current = 'pan';
+      cancelLongPress();
+      engineRef.current?.beginPan(screen.x, screen.y);
+    },
+    [cancelLongPress, engineRef],
+  );
 
   const openLayerMenu = useCallback(
     (clientX: number, clientY: number) => {
@@ -170,6 +238,8 @@ export function DrawingCanvas({
     }
     activePointerRef.current = null;
     modeRef.current = 'idle';
+    twoFingerPanRef.current = false;
+    spacePanRef.current = false;
   }, [cancelLongPress]);
 
   const tryOpenContextMenuAt = useCallback(
@@ -265,7 +335,7 @@ export function DrawingCanvas({
   }, [tool, drawSettings, eraserSettings.mode]);
 
   const getCursorTool = (): 'select' | 'lasso' | 'hand' | 'draw' | 'image' | 'text' => {
-    if (isHandMode) return 'hand';
+    if (spaceHeld || isHandMode) return 'hand';
     if (isLassoMode) return 'lasso';
     if (isSelectMode) return 'select';
     if (isImageMode) return 'image';
@@ -434,33 +504,65 @@ export function DrawingCanvas({
     };
   }, [attachImageRef, openImagePicker]);
 
-  const syncEraserCursor = useCallback(
+  const getBrushDiameter = useCallback(
+    (engine: DrawingEngine): number => {
+      if (isEraserMode) {
+        return TOOL_PRESETS.eraser.baseWidth * engine.getViewScale();
+      }
+      if (isDrawSettingsTool(tool)) {
+        return drawSettingsToOptions(tool, drawSettings).baseWidth * engine.getViewScale();
+      }
+      return 0;
+    },
+    [tool, drawSettings, isEraserMode],
+  );
+
+  const syncBrushCursor = useCallback(
     (visible: boolean) => {
-      const el = eraserCursorRef.current;
+      const el = brushCursorRef.current;
       const engine = engineRef.current;
       const pt = lastScreenPointRef.current;
+      const dot = el?.querySelector<HTMLElement>('.brush-cursor__dot');
 
-      if (!el || !isEraserMode) {
+      if (!el || !dot || !showBrushPreview || textEditSession) {
         if (el) el.style.display = 'none';
         return;
       }
 
-      if (!visible || !pt || !engine) {
+      if (!visible || !pt || !engine || activePointerRef.current !== null) {
         el.style.display = 'none';
         return;
       }
 
-      const diameter = TOOL_PRESETS.eraser.baseWidth * engine.getViewScale();
+      const isAimTool = tool === 'pencil' || tool === 'pen';
+      const diameter = getBrushDiameter(engine);
+
+      el.classList.toggle('brush-cursor--aim', isAimTool);
       el.style.display = 'block';
       el.style.left = `${pt.x}px`;
       el.style.top = `${pt.y}px`;
-      el.style.width = `${diameter}px`;
-      el.style.height = `${diameter}px`;
+
+      const dotSize = isAimTool ? Math.max(diameter, 4) : diameter;
+      dot.style.width = `${dotSize}px`;
+      dot.style.height = `${dotSize}px`;
+
+      if (isEraserMode) {
+        dot.style.opacity = '1';
+        dot.style.backgroundColor = 'transparent';
+        dot.style.borderColor = 'rgba(70, 70, 80, 0.85)';
+        return;
+      }
+
+      const opts = drawSettingsToOptions(tool, drawSettings);
+      dot.style.opacity = '1';
+      dot.style.backgroundColor = colorWithAlpha(opts.color, opts.opacity);
+      dot.style.borderColor =
+        opts.color.toLowerCase() === '#ffffff' ? 'rgba(70, 70, 80, 0.85)' : opts.color;
     },
-    [engineRef, isEraserMode],
+    [drawSettings, getBrushDiameter, showBrushPreview, textEditSession, tool, isEraserMode],
   );
-  const syncEraserCursorRef = useRef(syncEraserCursor);
-  syncEraserCursorRef.current = syncEraserCursor;
+  const syncBrushCursorRef = useRef(syncBrushCursor);
+  syncBrushCursorRef.current = syncBrushCursor;
 
   const placeImageFiles = useCallback(
     async (files: File[], clientX: number, clientY: number) => {
@@ -497,7 +599,7 @@ export function DrawingCanvas({
     });
 
     engine.setOnZoomChange(() => {
-      syncEraserCursorRef.current(true);
+      syncBrushCursorRef.current(true);
     });
 
     void engine.loadScene(initialPaths, initialImages, initialTexts);
@@ -545,10 +647,56 @@ export function DrawingCanvas({
   }, [engineReady]);
 
   useEffect(() => {
-    if (!isEraserMode) {
-      syncEraserCursor(false);
+    if (!showBrushPreview) {
+      syncBrushCursor(false);
+      return;
     }
-  }, [isEraserMode, syncEraserCursor]);
+    syncBrushCursor(lastScreenPointRef.current !== null);
+  }, [showBrushPreview, tool, drawSettings, syncBrushCursor]);
+
+  useEffect(() => {
+    if (textEditSession) {
+      syncBrushCursor(false);
+    }
+  }, [textEditSession, syncBrushCursor]);
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return;
+      if (isEditableTarget(e.target)) return;
+      e.preventDefault();
+      spaceHeldRef.current = true;
+      setSpaceHeld(true);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+      if (spacePanRef.current && modeRef.current === 'pan') {
+        flushPanUpdate();
+        engineRef.current?.endPan();
+        resetActivePointer();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (panRafRef.current !== null) {
+        cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
+    };
+  }, [engineRef, flushPanUpdate, resetActivePointer]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -611,6 +759,53 @@ export function DrawingCanvas({
     void placeImageFiles(files, e.clientX, e.clientY);
   };
 
+  const tryStartTwoFingerPan = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>): boolean => {
+      if (touchPointersRef.current.size < 2 || textEditSession) return false;
+
+      const engine = engineRef.current;
+      const canvas = canvasRef.current;
+      if (!engine || !canvas) return false;
+
+      cancelLongPress();
+
+      if (modeRef.current === 'draw') {
+        engine.endStroke();
+      } else if (modeRef.current === 'select-move') {
+        engine.endMove();
+      } else if (modeRef.current === 'select-lasso') {
+        engine.endLasso();
+      } else if (modeRef.current === 'handle') {
+        engine.endHandleDrag();
+        activeHandleRef.current = null;
+      } else if (modeRef.current === 'pan') {
+        flushPanUpdate();
+        engine.endPan();
+      }
+
+      if (activePointerRef.current !== null) {
+        try {
+          canvas.releasePointerCapture(activePointerRef.current);
+        } catch {
+          /* already released */
+        }
+      }
+
+      const centroid = getTouchCentroid();
+      if (!centroid) return false;
+
+      twoFingerPanRef.current = true;
+      spacePanRef.current = false;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      activePointerRef.current = e.pointerId;
+      modeRef.current = 'pan';
+      engine.beginPan(centroid.x, centroid.y);
+      if (e.cancelable) e.preventDefault();
+      return true;
+    },
+    [cancelLongPress, engineRef, flushPanUpdate, getTouchCentroid, textEditSession],
+  );
+
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (textEditSession) return;
 
@@ -634,6 +829,24 @@ export function DrawingCanvas({
     const world = toWorldPoint(e, engine);
     const hit = engine.hitTestSceneObjectAt(world.x, world.y);
     const isDoubleClick = detectDoubleClick(screen);
+
+    if (e.pointerType === 'touch') {
+      touchPointersRef.current.set(e.pointerId, screen);
+      if (tryStartTwoFingerPan(e)) return;
+    }
+
+    if (
+      e.button === 0 &&
+      spaceHeldRef.current &&
+      !textEditSession &&
+      activePointerRef.current === null
+    ) {
+      if (e.cancelable) e.preventDefault();
+      spacePanRef.current = true;
+      twoFingerPanRef.current = false;
+      startPanInteraction(e, screen);
+      return;
+    }
 
     if (e.button === 0 && hit && isTextObject(hit) && isDoubleClick) {
       tryOpenTextForEdit(hit);
@@ -676,11 +889,9 @@ export function DrawingCanvas({
       }
 
       if ((isStylusPointer(e) || e.pointerType === 'touch') && isHandMode) {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        activePointerRef.current = e.pointerId;
-        modeRef.current = 'pan';
-        cancelLongPress();
-        engine.beginPan(screen.x, screen.y);
+        twoFingerPanRef.current = false;
+        spacePanRef.current = false;
+        startPanInteraction(e, screen);
         return;
       }
 
@@ -713,8 +924,9 @@ export function DrawingCanvas({
     activePointerRef.current = e.pointerId;
 
     if (isHandMode) {
-      modeRef.current = 'pan';
-      engine.beginPan(screen.x, screen.y);
+      twoFingerPanRef.current = false;
+      spacePanRef.current = false;
+      startPanInteraction(e, screen);
       return;
     }
 
@@ -750,13 +962,17 @@ export function DrawingCanvas({
     const screen = toScreenPoint(e);
     const world = toWorldPoint(e, engine);
 
-    if (isEraserMode) {
+    if (e.pointerType === 'touch') {
+      touchPointersRef.current.set(e.pointerId, screen);
+    }
+
+    if (showBrushPreview) {
       lastScreenPointRef.current = { x: screen.x, y: screen.y };
-      syncEraserCursor(true);
+      syncBrushCursor(true);
     }
 
     if (activePointerRef.current === null) {
-      if (!isEraserMode) {
+      if (!showBrushPreview) {
         canvasRef.current!.style.cursor = engine.getCursorHint(
           world.x,
           world.y,
@@ -788,9 +1004,10 @@ export function DrawingCanvas({
             engine.beginLasso(pending.x, pending.y);
             engine.extendLasso(world.x, world.y);
           } else if (kind === 'pan' && pendingScreen) {
-            modeRef.current = 'pan';
-            engine.beginPan(pendingScreen.x, pendingScreen.y);
-            engine.updatePan(screen.x, screen.y);
+            twoFingerPanRef.current = false;
+            spacePanRef.current = false;
+            startPanInteraction(e, pendingScreen);
+            schedulePanUpdate(screen.x, screen.y);
           } else if (kind === 'draw') {
             modeRef.current = 'draw';
             const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
@@ -818,7 +1035,12 @@ export function DrawingCanvas({
     }
 
     if (modeRef.current === 'pan') {
-      engine.updatePan(screen.x, screen.y);
+      if (twoFingerPanRef.current) {
+        const centroid = getTouchCentroid();
+        if (centroid) schedulePanUpdate(centroid.x, centroid.y);
+      } else {
+        schedulePanUpdate(screen.x, screen.y);
+      }
       return;
     }
 
@@ -838,6 +1060,10 @@ export function DrawingCanvas({
   };
 
   const finishPointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'touch') {
+      touchPointersRef.current.delete(e.pointerId);
+    }
+
     if (e.pointerType === 'pen') {
       activePenPointerCountRef.current = Math.max(0, activePenPointerCountRef.current - 1);
     }
@@ -867,6 +1093,7 @@ export function DrawingCanvas({
       engine?.endHandleDrag();
       activeHandleRef.current = null;
     } else if (modeRef.current === 'pan') {
+      flushPanUpdate();
       engine?.endPan();
     } else if (modeRef.current === 'select-move') {
       engine?.endMove();
@@ -878,11 +1105,18 @@ export function DrawingCanvas({
 
     modeRef.current = 'idle';
     activePointerRef.current = null;
+    twoFingerPanRef.current = false;
+    spacePanRef.current = false;
+
+    if (showBrushPreview) {
+      lastScreenPointRef.current = toScreenPoint(e);
+      syncBrushCursorRef.current(true);
+    }
   };
 
   const handlePointerLeave = () => {
     lastScreenPointRef.current = null;
-    syncEraserCursor(false);
+    syncBrushCursor(false);
     cancelLongPress();
   };
 
@@ -902,10 +1136,10 @@ export function DrawingCanvas({
   };
 
   const handlePointerEnter = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isEraserMode) return;
+    if (!showBrushPreview) return;
     const screen = toScreenPoint(e);
     lastScreenPointRef.current = { x: screen.x, y: screen.y };
-    syncEraserCursor(true);
+    syncBrushCursor(true);
   };
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -943,7 +1177,7 @@ export function DrawingCanvas({
       />
       <canvas
         ref={canvasRef}
-        className={`drawing-canvas ${isSelectionTool ? 'select-mode' : ''} ${isHandMode ? 'hand-mode' : ''} ${isLassoMode ? 'lasso-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''} ${isImageMode ? 'image-mode' : ''} ${isTextMode ? 'text-mode' : ''}`}
+        className={`drawing-canvas ${isSelectionTool ? 'select-mode' : ''} ${isHandMode ? 'hand-mode' : ''} ${isLassoMode ? 'lasso-mode' : ''} ${showBrushPreview ? 'brush-preview-mode' : ''} ${spaceHeld ? 'space-pan-mode' : ''} ${isImageMode ? 'image-mode' : ''} ${isTextMode ? 'text-mode' : ''}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}
@@ -954,7 +1188,11 @@ export function DrawingCanvas({
         onDragStart={(e) => e.preventDefault()}
         onDoubleClick={handleDoubleClick}
       />
-      <div ref={eraserCursorRef} className="eraser-cursor" aria-hidden="true" />
+      <div ref={brushCursorRef} className="brush-cursor" aria-hidden="true">
+        <span className="brush-cursor__cross-h" />
+        <span className="brush-cursor__cross-v" />
+        <span className="brush-cursor__dot" />
+      </div>
       {textEditSession && (
         <TextEditorOverlay
           session={textEditSession}

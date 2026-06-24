@@ -71,6 +71,8 @@ interface MoveDrag {
 interface PanDrag {
   lastScreenX: number;
   lastScreenY: number;
+  startViewOffsetX: number;
+  startViewOffsetY: number;
 }
 
 export class DrawingEngine {
@@ -108,6 +110,8 @@ export class DrawingEngine {
   private sceneCacheViewKey = '';
   private dragBaseCache: HTMLCanvasElement | null = null;
   private dragBaseCacheCtx: CanvasRenderingContext2D | null = null;
+  private panBaseCache: HTMLCanvasElement | null = null;
+  private panBaseCacheCtx: CanvasRenderingContext2D | null = null;
   private historyNotifyScheduled = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -362,7 +366,16 @@ export class DrawingEngine {
   }
 
   beginPan(screenX: number, screenY: number): void {
-    this.panDrag = { lastScreenX: screenX, lastScreenY: screenY };
+    if (!this.panDrag) {
+      this.redraw();
+      this.buildPanBaseCache();
+    }
+    this.panDrag = {
+      lastScreenX: screenX,
+      lastScreenY: screenY,
+      startViewOffsetX: this.viewOffsetX,
+      startViewOffsetY: this.viewOffsetY,
+    };
   }
 
   updatePan(screenX: number, screenY: number): void {
@@ -371,12 +384,20 @@ export class DrawingEngine {
     this.viewOffsetY += screenY - this.panDrag.lastScreenY;
     this.panDrag.lastScreenX = screenX;
     this.panDrag.lastScreenY = screenY;
+    this.redrawPanPreview();
+    this.notifyZoomChange();
+  }
+
+  endPan(): void {
+    if (!this.panDrag) return;
+    this.panDrag = null;
+    this.clearPanBaseCache();
     this.invalidateSceneCache();
     this.redraw();
   }
 
-  endPan(): void {
-    this.panDrag = null;
+  isPanning(): boolean {
+    return this.panDrag !== null;
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -744,13 +765,20 @@ export class DrawingEngine {
     this.strokeOptions = options;
     this.strokePreset = preset;
     this.redraw();
-    this.renderPreviewDot(point, options, preset);
+    if (options.tool !== 'highlighter' && options.tool !== 'pencil') {
+      this.renderPreviewDot(point, options, preset);
+    }
   }
 
   extendStroke(point: StrokePoint): void {
     if (!this.isDrawing || !this.strokeOptions || !this.strokePreset) return;
 
     this.strokePoints.push(point);
+
+    if (this.strokeOptions.tool === 'highlighter' || this.strokeOptions.tool === 'pencil') {
+      this.redraw();
+      return;
+    }
 
     if (this.strokePoints.length < 3) {
       this.renderPreviewSegment(this.strokePoints[this.strokePoints.length - 2], point);
@@ -817,6 +845,15 @@ export class DrawingEngine {
   }
 
   redraw(): void {
+    if (this.panDrag && this.panBaseCache) {
+      this.redrawPanPreview();
+      if (this.dropHighlight) {
+        const canvas = this.ctx.canvas;
+        renderDropOverlay(this.ctx, canvas.width / this.dpr, canvas.height / this.dpr);
+      }
+      return;
+    }
+
     if (this.isDragActive() && this.dragBaseCache) {
       this.clearBackground();
 
@@ -1106,6 +1143,43 @@ export class DrawingEngine {
     this.dragBaseCacheCtx = null;
   }
 
+  private buildPanBaseCache(): void {
+    const canvas = this.ctx.canvas;
+    if (!this.panBaseCache) {
+      this.panBaseCache = document.createElement('canvas');
+      this.panBaseCacheCtx = this.panBaseCache.getContext('2d');
+    }
+
+    if (!this.panBaseCacheCtx) {
+      throw new Error('Pan base cache context unavailable');
+    }
+
+    this.panBaseCache.width = canvas.width;
+    this.panBaseCache.height = canvas.height;
+    this.panBaseCacheCtx.drawImage(canvas, 0, 0);
+  }
+
+  private clearPanBaseCache(): void {
+    this.panBaseCache = null;
+    this.panBaseCacheCtx = null;
+  }
+
+  private redrawPanPreview(): void {
+    if (!this.panDrag || !this.panBaseCache) return;
+
+    const canvas = this.ctx.canvas;
+    const dx = (this.viewOffsetX - this.panDrag.startViewOffsetX) * this.dpr;
+    const dy = (this.viewOffsetY - this.panDrag.startViewOffsetY) * this.dpr;
+
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fillRect(0, 0, canvas.width, canvas.height);
+    this.ctx.drawImage(this.panBaseCache, dx, dy);
+    this.ctx.restore();
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  }
+
   private renderSceneObjectsToCache(
     cacheCtx: CanvasRenderingContext2D,
     options: {
@@ -1258,10 +1332,6 @@ export class DrawingEngine {
         ctx.globalCompositeOperation = 'destination-out';
         ctx.fillStyle = 'rgba(0,0,0,1)';
       }
-    } else if (options.tool === 'highlighter') {
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.fillStyle = options.color;
-      ctx.globalAlpha = options.opacity;
     } else {
       ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = options.color;

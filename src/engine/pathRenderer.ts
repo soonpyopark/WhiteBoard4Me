@@ -1,6 +1,6 @@
 import { pressureToWidth } from './pressure';
+import { smoothStrokePoints } from './pathObject';
 import type { DrawingOptions, EraserMode, PathObject, StrokePoint, ToolPreset } from './types';
-
 function pseudoRandom(seed: number): number {
   const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
@@ -29,10 +29,6 @@ function paintDab(
       ctx.globalCompositeOperation = 'destination-out';
       ctx.fillStyle = 'rgba(0,0,0,1)';
     }
-  } else if (tool === 'highlighter') {
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = color;
-    ctx.globalAlpha = opacity;
   } else {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = color;
@@ -55,6 +51,200 @@ function paintDab(
     }
   }
 
+  ctx.restore();
+}
+
+let strokeScratch: HTMLCanvasElement | null = null;
+let strokeScratchCtx: CanvasRenderingContext2D | null = null;
+
+function ensureStrokeScratch(width: number, height: number): CanvasRenderingContext2D | null {
+  if (!strokeScratch) {
+    strokeScratch = document.createElement('canvas');
+    strokeScratchCtx = strokeScratch.getContext('2d');
+  }
+  if (!strokeScratchCtx) return null;
+
+  if (strokeScratch.width < width || strokeScratch.height < height) {
+    strokeScratch.width = Math.max(strokeScratch.width, width);
+    strokeScratch.height = Math.max(strokeScratch.height, height);
+  }
+
+  return strokeScratchCtx;
+}
+
+function strokeBounds(
+  points: StrokePoint[],
+  pad: number,
+): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+
+  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+}
+
+/** Draw opaque stroke to scratch, then composite once — avoids alpha stacking at joints. */
+function renderHighlighterStroke(
+  ctx: CanvasRenderingContext2D,
+  points: StrokePoint[],
+  color: string,
+  opacity: number,
+  lineWidth: number,
+): void {
+  if (points.length === 0) return;
+
+  const pad = lineWidth / 2 + 2;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+
+  const scratchW = Math.ceil(maxX - minX + pad * 2);
+  const scratchH = Math.ceil(maxY - minY + pad * 2);
+  if (scratchW <= 0 || scratchH <= 0) return;
+
+  const scratchCtx = ensureStrokeScratch(scratchW, scratchH);
+  if (!scratchCtx || !strokeScratch) return;
+
+  scratchCtx.save();
+  scratchCtx.setTransform(1, 0, 0, 1, 0, 0);
+  scratchCtx.clearRect(0, 0, scratchW, scratchH);
+  scratchCtx.globalCompositeOperation = 'source-over';
+  scratchCtx.globalAlpha = 1;
+  scratchCtx.strokeStyle = color;
+  scratchCtx.fillStyle = color;
+  scratchCtx.lineCap = 'round';
+  scratchCtx.lineJoin = 'round';
+  scratchCtx.lineWidth = lineWidth;
+
+  const ox = minX - pad;
+  const oy = minY - pad;
+
+  if (points.length === 1) {
+    scratchCtx.beginPath();
+    scratchCtx.arc(points[0].x - ox, points[0].y - oy, lineWidth / 2, 0, Math.PI * 2);
+    scratchCtx.fill();
+  } else {
+    scratchCtx.beginPath();
+    scratchCtx.moveTo(points[0].x - ox, points[0].y - oy);
+    for (let i = 1; i < points.length; i++) {
+      scratchCtx.lineTo(points[i].x - ox, points[i].y - oy);
+    }
+    scratchCtx.stroke();
+  }
+
+  scratchCtx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = opacity;
+  ctx.drawImage(strokeScratch, 0, 0, scratchW, scratchH, ox, oy, scratchW, scratchH);
+  ctx.restore();
+}
+
+function renderPencilStroke(
+  ctx: CanvasRenderingContext2D,
+  points: StrokePoint[],
+  color: string,
+  opacity: number,
+  baseWidth: number,
+  minWidth: number,
+  maxWidth: number,
+  textured: boolean,
+): void {
+  if (points.length === 0) return;
+
+  const widthAt = (p: StrokePoint) => pressureToWidth(p, baseWidth, minWidth, maxWidth);
+  const pad = maxWidth / 2 + 2;
+  const { minX, minY, maxX, maxY } = strokeBounds(points, pad);
+  const scratchW = Math.ceil(maxX - minX);
+  const scratchH = Math.ceil(maxY - minY);
+  if (scratchW <= 0 || scratchH <= 0) return;
+
+  const scratchCtx = ensureStrokeScratch(scratchW, scratchH);
+  if (!scratchCtx || !strokeScratch) return;
+
+  scratchCtx.save();
+  scratchCtx.setTransform(1, 0, 0, 1, 0, 0);
+  scratchCtx.clearRect(0, 0, scratchW, scratchH);
+  scratchCtx.globalCompositeOperation = 'source-over';
+  scratchCtx.globalAlpha = 1;
+  scratchCtx.strokeStyle = color;
+  scratchCtx.fillStyle = color;
+  scratchCtx.lineCap = 'round';
+  scratchCtx.lineJoin = 'round';
+
+  if (points.length === 1) {
+    const w = widthAt(points[0]);
+    scratchCtx.beginPath();
+    scratchCtx.arc(points[0].x - minX, points[0].y - minY, w / 2, 0, Math.PI * 2);
+    scratchCtx.fill();
+  } else {
+    for (let i = 1; i < points.length; i++) {
+      const from = points[i - 1];
+      const to = points[i];
+      scratchCtx.lineWidth = (widthAt(from) + widthAt(to)) / 2;
+      scratchCtx.beginPath();
+      scratchCtx.moveTo(from.x - minX, from.y - minY);
+      scratchCtx.lineTo(to.x - minX, to.y - minY);
+      scratchCtx.stroke();
+    }
+  }
+
+  if (textured && points.length > 1) {
+    scratchCtx.fillStyle = color;
+    for (let i = 1; i < points.length; i++) {
+      const from = points[i - 1];
+      const to = points[i];
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const dist = Math.hypot(dx, dy);
+      const grainStep = 1.5;
+      const grains = Math.max(1, Math.ceil(dist / grainStep));
+      const wFrom = widthAt(from);
+      const wTo = widthAt(to);
+
+      for (let g = 0; g <= grains; g++) {
+        const t = g / grains;
+        if (pseudoRandom(i * 1000 + g) > 0.45) continue;
+
+        const x = from.x + dx * t - minX;
+        const y = from.y + dy * t - minY;
+        const w = wFrom + (wTo - wFrom) * t;
+        const jitter = 0.35;
+        const seed = i * 1000 + g;
+        const ox = (pseudoRandom(seed + 17.3) - 0.5) * w * jitter;
+        const oy = (pseudoRandom(seed + 41.9) - 0.5) * w * jitter;
+
+        scratchCtx.globalAlpha = 0.22;
+        scratchCtx.beginPath();
+        scratchCtx.arc(x + ox, y + oy, Math.max(0.4, w * 0.18), 0, Math.PI * 2);
+        scratchCtx.fill();
+      }
+    }
+  }
+
+  scratchCtx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = opacity;
+  ctx.drawImage(strokeScratch, 0, 0, scratchW, scratchH, minX, minY, scratchW, scratchH);
   ctx.restore();
 }
 
@@ -99,6 +289,27 @@ export function renderPath(ctx: CanvasRenderingContext2D, path: PathObject): voi
   ctx.rotate(transform.rotation);
   ctx.scale(transform.scale, transform.scale);
 
+  if (path.tool === 'highlighter') {
+    renderHighlighterStroke(ctx, path.points, path.color, path.opacity, path.baseWidth);
+    ctx.restore();
+    return;
+  }
+
+  if (path.tool === 'pencil') {
+    renderPencilStroke(
+      ctx,
+      path.points,
+      path.color,
+      path.opacity,
+      path.baseWidth,
+      path.minWidth,
+      path.maxWidth,
+      path.textured,
+    );
+    ctx.restore();
+    return;
+  }
+
   if (path.points.length === 1) {
     const p = path.points[0];
     const w = pressureToWidth(p, path.baseWidth, path.minWidth, path.maxWidth);
@@ -133,10 +344,6 @@ function drawArrowHead(
   if (path.tool === 'eraser') {
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = 'rgba(0,0,0,1)';
-  } else if (path.tool === 'highlighter') {
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = path.color;
-    ctx.globalAlpha = path.opacity;
   } else {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = path.color;
@@ -211,6 +418,33 @@ export function renderLiveStroke(
   ctx.translate(transform.cx, transform.cy);
   ctx.rotate(transform.rotation);
   ctx.scale(transform.scale, transform.scale);
+
+  if (fakePath.tool === 'highlighter') {
+    renderHighlighterStroke(
+      ctx,
+      smoothStrokePoints(fakePath.points),
+      fakePath.color,
+      fakePath.opacity,
+      fakePath.baseWidth,
+    );
+    ctx.restore();
+    return;
+  }
+
+  if (fakePath.tool === 'pencil') {
+    renderPencilStroke(
+      ctx,
+      smoothStrokePoints(fakePath.points),
+      fakePath.color,
+      fakePath.opacity,
+      fakePath.baseWidth,
+      fakePath.minWidth,
+      fakePath.maxWidth,
+      fakePath.textured,
+    );
+    ctx.restore();
+    return;
+  }
 
   if (fakePath.points.length === 1) {
     const p = fakePath.points[0];

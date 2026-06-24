@@ -28,6 +28,11 @@
   color: #323130;
 }
 
+.gallery-version {
+  font-weight: 500;
+  color: #718096;
+}
+
 .gallery-header-actions {
   display: flex;
   align-items: center;
@@ -192,13 +197,15 @@
 }
 
 .card-title-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   border: none;
   background: none;
   text-align: left;
   cursor: pointer;
   padding: 0.25rem;
   border-radius: 4px;
+  overflow: hidden;
 }
 
 .card-title-btn:hover {

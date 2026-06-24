@@ -1,0 +1,63 @@
+{
+  "name": "white-board",
+  "private": true,
+  "version": "1.0.0",
+  "description": "My-local-whiteboard v1.0",
+  "author": "My-local-whiteboard",
+  "type": "module",
+  "main": "electron-dist/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "start": "tsx server/index.ts",
+    "preview": "npm run build && npm run start",
+    "build:electron": "node scripts/build-electron.mjs",
+    "electron:dev": "npm run build && npm run build:electron && electron .",
+    "build:dist:exe": "node scripts/build-dist-exe.mjs"
+  },
+  "dependencies": {
+    "concurrently": "^10.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "oxlint": "^1.69.0",
+    "tsx": "^4.22.4",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0",
+    "electron": "^36.2.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.1"
+  },
+  "build": {
+    "appId": "com.my-local-whiteboard.app",
+    "productName": "My-local-whiteboard",
+    "files": [
+      "electron-dist/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "signAndEditExecutable": false
+    }
+  }
+}

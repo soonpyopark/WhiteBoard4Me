@@ -553,12 +553,6 @@
   margin: 0;
 }
 
-.tool-options-divider {
-  height: 1px;
-  margin: 0.125rem 0 0.625rem;
-  background: #e2e6ed;
-}
-
 .tool-options-color {
   display: flex;
   align-items: center;
@@ -669,6 +663,11 @@
   overflow: hidden;
   padding: 0.375rem;
   min-height: 0;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
 .canvas-container {
@@ -681,6 +680,11 @@
     0 1px 4px rgba(0, 0, 0, 0.05),
     0 0 0 1px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
 }
 
 .canvas-file-input {
@@ -733,8 +737,7 @@
   gap: 0.375rem;
 }
 
-.text-options-select,
-.text-options-input {
+.text-options-select {
   width: 100%;
   min-width: 0;
   height: 32px;
@@ -744,13 +747,6 @@
   font-size: 0.8125rem;
   background: #fff;
   color: #323130;
-}
-
-.text-options-font-hint {
-  margin: 0;
-  font-size: 0.6875rem;
-  line-height: 1.35;
-  color: #718096;
 }
 
 .drawing-canvas.text-mode {
@@ -763,6 +759,10 @@
   height: 100%;
   touch-action: none;
   cursor: crosshair;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .drawing-canvas.select-mode {

@@ -27,7 +27,7 @@ function copyDirectory(from, to) {
   }
 }
 
-const buildName = `My-local-whiteboard-${formatTimestamp(new Date())}`;
+const buildName = `WhiteBoard4Me-${formatTimestamp(new Date())}`;
 const finalOutDir = path.resolve('exe', buildName);
 const stagingOutDir = path.join(os.tmpdir(), `wb-exe-build-${buildName}`);
 
@@ -67,4 +67,4 @@ if (fs.existsSync(envExampleSrc)) {
 
 fs.rmSync(stagingOutDir, { recursive: true, force: true });
 
-console.log(`\nDone. Copy this folder to USB and run My-local-whiteboard.exe inside:\n  ${finalOutDir}\n`);
+console.log(`\nDone. Copy this folder to USB and run WhiteBoard4Me.exe inside:\n  ${finalOutDir}\n`);

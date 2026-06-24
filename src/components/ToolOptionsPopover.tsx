@@ -245,8 +245,6 @@ export function ToolOptionsPopover({ settings, onChange, anchorRef, onClose }: T
         aria-hidden="true"
       />
 
-      <div className="tool-options-divider" />
-
       <div className="tool-options-palette">
         {MAIN_COLOR_PALETTE.map((c) => (
           <button

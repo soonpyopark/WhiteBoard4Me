@@ -84,7 +84,7 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
       <header className="gallery-header">
         <div className="gallery-header-left">
           <HomeButton onAppHome={handleAppHome} />
-          <h1 className="gallery-title">My-local-whiteboard v1.0</h1>
+          <h1 className="gallery-title">WhiteBoard4Me</h1>
         </div>
         <div className="gallery-header-actions">
           <button type="button" className="header-icon-btn" title="설정" aria-label="설정">

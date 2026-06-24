@@ -168,17 +168,6 @@ export function TextOptionsPopover({
               </option>
             ))}
           </select>
-          <input
-            id="text-font-family-custom"
-            type="text"
-            className="text-options-input"
-            value={settings.fontFamily}
-            onChange={(e) => onChange({ fontFamily: e.target.value })}
-            placeholder="PC 글꼴 이름 (예: 나눔고딕, Times New Roman)"
-            spellCheck={false}
-            aria-label="PC에 설치된 글꼴 이름"
-          />
-          <p className="text-options-font-hint">폰트 파일은 배포에 포함되지 않습니다. PC에 설치된 글꼴만 사용됩니다.</p>
         </div>
       </div>
 

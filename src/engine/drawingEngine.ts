@@ -887,7 +887,11 @@ export class DrawingEngine {
     tool: 'select' | 'lasso' | 'hand' | 'draw' | 'image' | 'text',
     isPanning = false,
   ): string {
-    if (tool === 'draw' || tool === 'image' || tool === 'text') return 'crosshair';
+    if (tool === 'draw' || tool === 'image') return 'crosshair';
+
+    const handle = this.hitTestHandleAt(worldX, worldY);
+    if (handle === 'rotate') return 'grab';
+    if (handle) return 'nwse-resize';
 
     if (tool === 'hand') {
       return isPanning ? 'grabbing' : 'grab';
@@ -895,10 +899,7 @@ export class DrawingEngine {
 
     if (tool === 'lasso') return 'crosshair';
 
-    // select tool cursors
-    const handle = this.hitTestHandleAt(worldX, worldY);
-    if (handle === 'rotate') return 'grab';
-    if (handle) return 'nwse-resize';
+    if (tool === 'text') return 'crosshair';
 
     if (this.selectedIds.length > 0 && this.containsSelectedAt(worldX, worldY)) {
       return 'pointer';

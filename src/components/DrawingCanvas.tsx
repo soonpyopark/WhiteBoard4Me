@@ -78,6 +78,18 @@ type PendingPointerKind = 'draw' | 'pan' | 'select-move' | 'select-lasso' | 'idl
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 8;
 
+function isStylusPointer(e: React.PointerEvent): boolean {
+  return e.pointerType === 'pen';
+}
+
+function isDrawTool(tool: Tool): boolean {
+  return tool === 'eraser' || isDrawSettingsTool(tool);
+}
+
+function shouldIgnoreTouchForDraw(tool: Tool, pointerType: string, activePenCount: number): boolean {
+  return isDrawTool(tool) && pointerType === 'touch' && activePenCount > 0;
+}
+
 export function DrawingCanvas({
   tool,
   drawSettings,
@@ -119,6 +131,7 @@ export function DrawingCanvas({
   const pendingMoveWorldRef = useRef<{ x: number; y: number } | null>(null);
   const pendingScreenRef = useRef<{ x: number; y: number } | null>(null);
   const pendingPointerKindRef = useRef<PendingPointerKind>('idle');
+  const activePenPointerCountRef = useRef(0);
 
   const isSelectMode = tool === 'select';
   const isLassoMode = tool === 'lasso';
@@ -193,6 +206,8 @@ export function DrawingCanvas({
       pendingPointerKindRef.current = kind;
       cancelLongPress();
       longPressTimerRef.current = window.setTimeout(() => {
+        if (pendingPointerKindRef.current === 'draw') return;
+
         longPressTriggeredRef.current = true;
         const engine = engineRef.current;
         const pending = pendingMoveWorldRef.current;
@@ -509,6 +524,27 @@ export function DrawingCanvas({
   }, [engineRef, onSelectionChange, onPathsChange, onHistoryChange, initialPaths, initialImages, initialTexts]);
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const blockNativeMenu = (e: Event) => {
+      if (e.cancelable) e.preventDefault();
+    };
+
+    canvas.addEventListener('selectstart', blockNativeMenu);
+    canvas.addEventListener('contextmenu', blockNativeMenu);
+    canvas.addEventListener('gesturestart', blockNativeMenu);
+    canvas.addEventListener('touchstart', blockNativeMenu, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('selectstart', blockNativeMenu);
+      canvas.removeEventListener('contextmenu', blockNativeMenu);
+      canvas.removeEventListener('gesturestart', blockNativeMenu);
+      canvas.removeEventListener('touchstart', blockNativeMenu);
+    };
+  }, [engineReady]);
+
+  useEffect(() => {
     if (!isEraserMode) {
       syncEraserCursor(false);
     }
@@ -581,6 +617,19 @@ export function DrawingCanvas({
     const engine = engineRef.current;
     if (!engine) return;
 
+    if (e.pointerType === 'pen') {
+      activePenPointerCountRef.current += 1;
+    }
+
+    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePenPointerCountRef.current)) return;
+
+    if (
+      e.cancelable &&
+      (isDrawTool(tool) || isHandMode || isEraserMode || isLassoMode || isSelectMode)
+    ) {
+      e.preventDefault();
+    }
+
     const screen = toScreenPoint(e);
     const world = toWorldPoint(e, engine);
     const hit = engine.hitTestSceneObjectAt(world.x, world.y);
@@ -598,19 +647,40 @@ export function DrawingCanvas({
 
     if (activePointerRef.current !== null) return;
 
+    if (e.button === 0 && (isSelectMode || isLassoMode || isTextMode)) {
+      const handle = engine.hitTestHandleAt(world.x, world.y);
+      if (handle) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        activePointerRef.current = e.pointerId;
+        modeRef.current = 'handle';
+        activeHandleRef.current = handle;
+        engine.beginHandleDrag(handle, world.x, world.y);
+        return;
+      }
+    }
+
     if (isTextMode && !hit) {
       openTextEditor(null, world.x, world.y);
       return;
     }
 
     if (e.button === 0 && hit) {
-      const handle = engine.hitTestHandleAt(world.x, world.y);
-      if (handle && (isSelectMode || isLassoMode)) {
+      if (isDrawTool(tool) && (isStylusPointer(e) || e.pointerType === 'touch')) {
         e.currentTarget.setPointerCapture(e.pointerId);
         activePointerRef.current = e.pointerId;
-        modeRef.current = 'handle';
-        activeHandleRef.current = handle;
-        engine.beginHandleDrag(handle, world.x, world.y);
+        modeRef.current = 'draw';
+        cancelLongPress();
+        const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
+        engine.beginStroke(world, getDrawOptions(), TOOL_PRESETS[drawTool]);
+        return;
+      }
+
+      if ((isStylusPointer(e) || e.pointerType === 'touch') && isHandMode) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        activePointerRef.current = e.pointerId;
+        modeRef.current = 'pan';
+        cancelLongPress();
+        engine.beginPan(screen.x, screen.y);
         return;
       }
 
@@ -674,6 +744,8 @@ export function DrawingCanvas({
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     if (!engine) return;
+
+    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePenPointerCountRef.current)) return;
 
     const screen = toScreenPoint(e);
     const world = toWorldPoint(e, engine);
@@ -766,6 +838,10 @@ export function DrawingCanvas({
   };
 
   const finishPointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'pen') {
+      activePenPointerCountRef.current = Math.max(0, activePenPointerCountRef.current - 1);
+    }
+
     if (activePointerRef.current !== e.pointerId) return;
 
     try {
@@ -875,6 +951,7 @@ export function DrawingCanvas({
         onPointerLeave={handlePointerLeave}
         onPointerEnter={handlePointerEnter}
         onContextMenu={handleContextMenu}
+        onDragStart={(e) => e.preventDefault()}
         onDoubleClick={handleDoubleClick}
       />
       <div ref={eraserCursorRef} className="eraser-cursor" aria-hidden="true" />

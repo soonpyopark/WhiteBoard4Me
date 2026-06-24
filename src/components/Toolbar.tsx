@@ -268,7 +268,6 @@ export function Toolbar({
         </div>
 
         <div className="toolbar-section toolbar-section--tools">
-          <span className="section-label">도구</span>
           <div className="tool-group" role="group" aria-label="Drawing tools">
             {TOOLS.map(({ id, label, icon }) => (
               <button

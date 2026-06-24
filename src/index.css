@@ -22,4 +22,16 @@ body {
   background: #eef1f6;
   color: #1a1a2e;
   -webkit-font-smoothing: antialiased;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable='true'],
+.canvas-text-editor {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
 }

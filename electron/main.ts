@@ -65,7 +65,7 @@ async function createWindow(): Promise<void> {
     height: 860,
     minWidth: 960,
     minHeight: 640,
-    title: 'My-local-whiteboard v1.0',
+    title: 'WhiteBoard4Me',
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,

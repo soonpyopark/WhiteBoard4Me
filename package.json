@@ -2,8 +2,8 @@
   "name": "white-board",
   "private": true,
   "version": "1.0.0",
-  "description": "My-local-whiteboard v1.0",
-  "author": "My-local-whiteboard",
+  "description": "WhiteBoard4Me",
+  "author": "WhiteBoard4Me",
   "type": "module",
   "main": "electron-dist/main.cjs",
   "scripts": {
@@ -39,8 +39,8 @@
     "esbuild": "^0.28.1"
   },
   "build": {
-    "appId": "com.my-local-whiteboard.app",
-    "productName": "My-local-whiteboard",
+    "appId": "com.whiteboard4me.app",
+    "productName": "WhiteBoard4Me",
     "files": [
       "electron-dist/**/*",
       "dist/**/*",

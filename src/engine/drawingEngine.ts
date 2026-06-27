@@ -22,6 +22,7 @@ import { renderLiveStroke, renderPath } from './pathRenderer';
 import { cloneImages, clonePaths, cloneTexts } from './sceneClone';
 import { applyTextDimensions, measureTextContent, renderText, TEXT_LINE_HEIGHT } from './textRenderer';
 import { pressureToWidth } from './pressure';
+import { getStylusCatmullSegments } from './strokeInput';
 import { catmullRomSpline } from './smoothing';
 import { renderDropOverlay, renderLasso, renderSelectionBox } from './selectionRenderer';
 import type {
@@ -765,41 +766,52 @@ export class DrawingEngine {
     this.strokeOptions = options;
     this.strokePreset = preset;
     this.redraw();
-    const isEraserStroke = options.tool === 'eraser' && options.eraserMode === 'stroke';
-    if (options.tool !== 'highlighter' && options.tool !== 'pencil' && !isEraserStroke) {
-      this.renderPreviewDot(point, options, preset);
-    }
   }
 
   extendStroke(point: StrokePoint): void {
-    if (!this.isDrawing || !this.strokeOptions || !this.strokePreset) return;
+    this.extendStrokePoints([point]);
+  }
 
-    this.strokePoints.push(point);
+  /** coalesced 포인트를 한 번에 추가 — redraw/증분 렌더는 도구별로 1회만 */
+  extendStrokePoints(points: StrokePoint[]): void {
+    if (!this.isDrawing || !this.strokeOptions || !this.strokePreset || points.length === 0) {
+      return;
+    }
 
-    const isEraserStroke =
-      this.strokeOptions.tool === 'eraser' && this.strokeOptions.eraserMode === 'stroke';
-    if (
-      this.strokeOptions.tool === 'highlighter' ||
-      this.strokeOptions.tool === 'pencil' ||
-      isEraserStroke
-    ) {
+    const opts = this.strokeOptions;
+    const preset = this.strokePreset;
+    const isEraserStroke = opts.tool === 'eraser' && opts.eraserMode === 'stroke';
+    const useFullRedraw =
+      opts.tool === 'highlighter' || opts.tool === 'pencil' || isEraserStroke;
+
+    if (useFullRedraw) {
+      this.strokePoints.push(...points);
       this.redraw();
       return;
     }
 
-    if (this.strokePoints.length < 3) {
-      this.renderPreviewSegment(this.strokePoints[this.strokePoints.length - 2], point);
-      return;
-    }
+    for (const point of points) {
+      this.strokePoints.push(point);
 
-    const len = this.strokePoints.length;
-    const smoothed = catmullRomSpline(
-      [this.strokePoints[len - 3], this.strokePoints[len - 2], point],
-      6,
-    );
+      if (this.strokePoints.length < 2) {
+        this.renderPreviewDot(point, opts, preset);
+        continue;
+      }
 
-    for (let i = 1; i < smoothed.length; i++) {
-      this.renderPreviewSegment(smoothed[i - 1], smoothed[i]);
+      if (this.strokePoints.length < 3) {
+        this.renderPreviewSegment(this.strokePoints[this.strokePoints.length - 2], point);
+        continue;
+      }
+
+      const len = this.strokePoints.length;
+      const smoothed = catmullRomSpline(
+        [this.strokePoints[len - 3], this.strokePoints[len - 2], point],
+        getStylusCatmullSegments(),
+      );
+
+      for (let i = 1; i < smoothed.length; i++) {
+        this.renderPreviewSegment(smoothed[i - 1], smoothed[i]);
+      }
     }
   }
 

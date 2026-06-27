@@ -110,8 +110,8 @@ export function normalizeRect(x1: number, y1: number, x2: number, y2: number): R
 
 export function smoothStrokePoints(points: StrokePoint[]): StrokePoint[] {
   if (points.length <= 1) return [...points];
-  if (points.length === 2) return catmullRomSpline(points, 10);
-  return catmullRomSpline(points, 6);
+  if (points.length === 2) return catmullRomSpline(points, 12);
+  return catmullRomSpline(points, 8);
 }
 
 export function createPathFromStroke(

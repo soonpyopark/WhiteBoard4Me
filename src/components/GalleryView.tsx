@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  copyWhiteboard,
   createWhiteboard,
   deleteWhiteboard,
   fetchWhiteboards,
@@ -72,6 +73,22 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
     }
   };
 
+  const handleCopy = async (id: string) => {
+    try {
+      const doc = await copyWhiteboard(id);
+      const summary: WhiteboardSummary = {
+        id: doc.id,
+        title: doc.title,
+        createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+        thumbnail: doc.thumbnail,
+      };
+      setBoards((prev) => [summary, ...prev]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '복사에 실패했습니다');
+    }
+  };
+
   const handleAppHome = () => {
     onAppHome?.();
     window.scrollTo(0, 0);
@@ -131,6 +148,7 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
                 onOpen={onOpen}
                 onDelete={handleDelete}
                 onRename={handleRename}
+                onCopy={handleCopy}
               />
             ))}
           </div>

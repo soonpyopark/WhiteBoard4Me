@@ -1,8 +1,9 @@
 import { getLocalBounds, localToWorld, worldToLocal } from './pathObject';
 import {
   hitTestPath,
+  pathContainedInLasso,
   pathIntersectsLasso,
-  rectIntersectsPolygon,
+  pointInPolygon,
 } from './hitTest';
 import type { ImageObject, LassoPoint, PathObject, Rect, SceneObject, TextObject } from './types';
 import { isTextObject } from './types';
@@ -196,7 +197,7 @@ export function hitAllSceneInLasso(
   const hit: SceneObject[] = [];
 
   for (const obj of sorted) {
-    if (objectIntersectsLasso(obj, lasso)) {
+    if (objectSelectedByLasso(obj, lasso)) {
       hit.push(obj);
     }
   }
@@ -228,24 +229,24 @@ export function getObjectsByIds(
   return result;
 }
 
-function objectIntersectsLasso(obj: SceneObject, lasso: LassoPoint[]): boolean {
+function objectSelectedByLasso(obj: SceneObject, lasso: LassoPoint[]): boolean {
   if ('points' in obj) {
     if (obj.tool === 'eraser') return false;
-    return pathIntersectsLasso(obj, lasso);
-  }
-
-  if (isTextObject(obj)) {
-    for (const p of lasso) {
-      if (hitTestText(obj, p.x, p.y)) return true;
+    if (obj.tool === 'pencil' || obj.tool === 'pen') {
+      return pathIntersectsLasso(obj, lasso);
     }
-    return rectIntersectsPolygon(getObjectWorldBounds(obj), lasso);
+    return pathContainedInLasso(obj, lasso);
   }
 
-  for (const p of lasso) {
-    if (hitTestImage(obj, p.x, p.y)) return true;
-  }
+  const local = getObjectLocalBounds(obj);
+  const corners = [
+    localToWorld(local.x, local.y, obj.transform),
+    localToWorld(local.x + local.w, local.y, obj.transform),
+    localToWorld(local.x, local.y + local.h, obj.transform),
+    localToWorld(local.x + local.w, local.y + local.h, obj.transform),
+  ];
 
-  return rectIntersectsPolygon(getObjectWorldBounds(obj), lasso);
+  return corners.every((c) => pointInPolygon(c.x, c.y, lasso));
 }
 
 export function moveSceneObject(obj: SceneObject, dx: number, dy: number): void {

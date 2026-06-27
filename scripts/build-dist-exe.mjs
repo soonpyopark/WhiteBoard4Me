@@ -42,6 +42,8 @@ if (fs.existsSync(finalOutDir)) {
 console.log(`\nBuilding USB-ready app folder: ${buildName}`);
 console.log(`Output directory: exe\\${buildName}\n`);
 
+execSync('node scripts/prepare-icon.mjs', { stdio: 'inherit' });
+
 execSync('npm run build', { stdio: 'inherit' });
 execSync('node scripts/build-electron.mjs', { stdio: 'inherit' });
 
@@ -60,6 +62,16 @@ if (!fs.existsSync(winUnpackedDir)) {
 
 copyDirectory(winUnpackedDir, finalOutDir);
 
+const dataSrc = path.resolve('data');
+const dataDest = path.join(finalOutDir, 'data');
+if (fs.existsSync(dataSrc)) {
+  console.log('Copying data/ to build output...');
+  copyDirectory(dataSrc, dataDest);
+} else {
+  fs.mkdirSync(dataDest, { recursive: true });
+  console.log('Created empty data/ in build output.');
+}
+
 const envExampleSrc = path.resolve('.env.example');
 if (fs.existsSync(envExampleSrc)) {
   fs.copyFileSync(envExampleSrc, path.join(finalOutDir, '.env.example'));
@@ -67,4 +79,6 @@ if (fs.existsSync(envExampleSrc)) {
 
 fs.rmSync(stagingOutDir, { recursive: true, force: true });
 
-console.log(`\nDone. Copy this folder to USB and run WhiteBoard4Me.exe inside:\n  ${finalOutDir}\n`);
+console.log(
+  `\nDone. Copy this folder to USB and run WhiteBoard4Me.exe inside:\n  ${finalOutDir}\n  (whiteboard data: ${path.join(finalOutDir, 'data')})\n`,
+);

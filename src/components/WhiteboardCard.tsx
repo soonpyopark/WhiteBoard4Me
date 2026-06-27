@@ -10,6 +10,7 @@ interface WhiteboardCardProps {
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onCopy: (id: string) => void;
 }
 
 function PencilIcon() {
@@ -17,6 +18,15 @@ function PencilIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
   );
 }
@@ -38,6 +48,7 @@ export function WhiteboardCard({
   onOpen,
   onDelete,
   onRename,
+  onCopy,
 }: WhiteboardCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -60,6 +71,11 @@ export function WhiteboardCard({
   const openRename = () => {
     setMenuOpen(false);
     setRenameOpen(true);
+  };
+
+  const openCopy = () => {
+    setMenuOpen(false);
+    onCopy(board.id);
   };
 
   const openDelete = () => {
@@ -124,6 +140,12 @@ export function WhiteboardCard({
                     <PencilIcon />
                   </span>
                   이름 바꾸기
+                </button>
+                <button type="button" className="card-menu-item" onClick={openCopy}>
+                  <span className="card-menu-icon">
+                    <CopyIcon />
+                  </span>
+                  복사
                 </button>
                 <button type="button" className="card-menu-item danger" onClick={openDelete}>
                   <span className="card-menu-icon">

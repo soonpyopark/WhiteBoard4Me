@@ -184,6 +184,25 @@ export function rectIntersectsPolygon(rect: Rect, polygon: LassoPoint[]): boolea
   return false;
 }
 
+/** 사각형 네 꼭짓점이 모두 다각형 안에 있을 때만 true */
+export function rectContainedInPolygon(rect: Rect, polygon: LassoPoint[]): boolean {
+  if (polygon.length < 3) return false;
+
+  const { x, y, w, h } = rect;
+  if (w <= 0 && h <= 0) {
+    return pointInPolygon(x, y, polygon);
+  }
+
+  const corners = [
+    { x, y },
+    { x: x + w, y },
+    { x, y: y + h },
+    { x: x + w, y: y + h },
+  ];
+
+  return corners.every((c) => pointInPolygon(c.x, c.y, polygon));
+}
+
 export function pathIntersectsLasso(path: PathObject, lasso: LassoPoint[]): boolean {
   if (lasso.length < 3 || path.tool === 'eraser') return false;
 
@@ -219,6 +238,41 @@ export function pathIntersectsLasso(path: PathObject, lasso: LassoPoint[]): bool
   const bounds = getSelectionOBB(path);
   const pad = path.maxWidth / 2 + 2 / path.transform.scale;
   return rectIntersectsPolygon(
+    { x: bounds.x - pad, y: bounds.y - pad, w: bounds.w + pad * 2, h: bounds.h + pad * 2 },
+    lasso,
+  );
+}
+
+/** 획 전체(선 두께 포함)가 올가미 안에 들어올 때만 true */
+export function pathContainedInLasso(path: PathObject, lasso: LassoPoint[]): boolean {
+  if (lasso.length < 3 || path.tool === 'eraser') return false;
+
+  for (const p of path.points) {
+    const w = localToWorld(p.x, p.y, path.transform);
+    if (!pointInPolygon(w.x, w.y, lasso)) return false;
+  }
+
+  for (let i = 1; i < path.points.length; i++) {
+    const a = path.points[i - 1];
+    const b = path.points[i];
+    const wa = localToWorld(a.x, a.y, path.transform);
+    const wb = localToWorld(b.x, b.y, path.transform);
+    const dx = wb.x - wa.x;
+    const dy = wb.y - wa.y;
+    const dist = Math.hypot(dx, dy);
+    const step = Math.max(3, (path.maxWidth * path.transform.scale) / 2);
+    const steps = Math.ceil(dist / step);
+    for (let j = 0; j <= steps; j++) {
+      const t = steps === 0 ? 0 : j / steps;
+      const x = wa.x + dx * t;
+      const y = wa.y + dy * t;
+      if (!pointInPolygon(x, y, lasso)) return false;
+    }
+  }
+
+  const bounds = getSelectionOBB(path);
+  const pad = path.maxWidth / 2 + 2 / path.transform.scale;
+  return rectContainedInPolygon(
     { x: bounds.x - pad, y: bounds.y - pad, w: bounds.w + pad * 2, h: bounds.h + pad * 2 },
     lasso,
   );

@@ -1,4 +1,5 @@
 import type { StrokePoint } from './types';
+import { isAppleStylusEnvironment } from './strokeInput';
 
 /** 마우스 등 필압 미지원 입력인지 판별 */
 export function hasPressureSupport(point: StrokePoint): boolean {
@@ -20,5 +21,12 @@ export function pressureToWidth(
     return baseWidth;
   }
   const t = Math.max(0, Math.min(1, point.pressure));
-  return minWidth + t * (maxWidth - minWidth);
+  let width = minWidth + t * (maxWidth - minWidth);
+
+  // Apple Pencil 필압 변화폭이 커서 선 굵기 떨림이 두드러짐
+  if (isAppleStylusEnvironment()) {
+    width = baseWidth + (width - baseWidth) * 0.5;
+  }
+
+  return width;
 }

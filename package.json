@@ -41,6 +41,9 @@
   "build": {
     "appId": "com.whiteboard4me.app",
     "productName": "WhiteBoard4Me",
+    "directories": {
+      "buildResources": "electron"
+    },
     "files": [
       "electron-dist/**/*",
       "dist/**/*",
@@ -57,7 +60,8 @@
       "target": [
         "dir"
       ],
-      "signAndEditExecutable": false
+      "icon": "icon.png",
+      "signExecutable": false
     }
   }
 }

@@ -22,7 +22,8 @@ import {
   type TextEditSession,
 } from './TextEditorOverlay';
 import type { TextToolSettings } from '../textToolSettings';
-import { isTextObject } from '../engine/types';
+import { collectPointerStrokePoints, type StylusSmoothState } from '../engine/strokeInput';
+import { isImageObject, isTextObject } from '../engine/types';
 
 interface DrawingCanvasProps {
   tool: Tool;
@@ -68,6 +69,23 @@ function toWorldPoint(
   };
 }
 
+function sampleStrokePoints(
+  e: React.PointerEvent<HTMLCanvasElement>,
+  engine: DrawingEngine,
+  stylusSmoothRef: { current: Map<number, StylusSmoothState> },
+): StrokePoint[] {
+  const { points, lastState } = collectPointerStrokePoints(
+    e.nativeEvent,
+    e.currentTarget,
+    (x, y) => engine.screenToWorld(x, y),
+    stylusSmoothRef.current.get(e.pointerId) ?? null,
+  );
+  if (lastState !== null) {
+    stylusSmoothRef.current.set(e.pointerId, lastState);
+  }
+  return points;
+}
+
 type InteractionMode =
   | 'draw'
   | 'select-lasso'
@@ -90,8 +108,16 @@ function isDrawTool(tool: Tool): boolean {
   return tool === 'eraser' || isDrawSettingsTool(tool);
 }
 
-function shouldIgnoreTouchForDraw(tool: Tool, pointerType: string, activePenCount: number): boolean {
-  return isDrawTool(tool) && pointerType === 'touch' && activePenCount > 0;
+function isPrimaryPointer(e: React.PointerEvent): boolean {
+  return e.button === 0 || e.pointerType === 'touch';
+}
+
+function shouldIgnoreTouchForDraw(tool: Tool, pointerType: string, activePointerType: string | null): boolean {
+  return isDrawTool(tool) && pointerType === 'touch' && activePointerType === 'pen';
+}
+
+function allowsDirectDrawOnHit(tool: Tool, e: React.PointerEvent): boolean {
+  return isDrawTool(tool) && (isStylusPointer(e) || e.pointerType === 'touch');
 }
 
 function colorWithAlpha(hex: string, alpha: number): string {
@@ -158,6 +184,7 @@ export function DrawingCanvas({
   const [engineReady, setEngineReady] = useState(false);
   const [textEditSession, setTextEditSession] = useState<TextEditSession | null>(null);
   const textDraftRef = useRef('');
+  const textRepositioningRef = useRef(false);
   const [layerMenu, setLayerMenu] = useState<{ x: number; y: number } | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
 
@@ -173,7 +200,12 @@ export function DrawingCanvas({
   const toolCursorClass = getToolCursorClass(tool, spaceHeld);
   const usesHoverCursor = isSelectMode || isHandMode || spaceHeld;
   const brushCursorRef = useRef<HTMLDivElement>(null);
-  const lastScreenPointRef = useRef<{ x: number; y: number } | null>(null);
+  /** 연필/볼펜/형광펜/지우개 커스텀 커서 위치 (브러시 도구 전용) */
+  const brushScreenPointRef = useRef<{ x: number; y: number } | null>(null);
+  const brushCursorRafRef = useRef<number | null>(null);
+  const brushCursorPendingRef = useRef<{ x: number; y: number } | null>(null);
+  /** 손/선택 등 OS 커서 hover 판별용 월드 좌표 */
+  const hoverWorldRef = useRef<{ x: number; y: number } | null>(null);
   const spaceHeldRef = useRef(false);
   const spacePanRef = useRef(false);
   const twoFingerPanRef = useRef(false);
@@ -187,7 +219,8 @@ export function DrawingCanvas({
   const pendingMoveWorldRef = useRef<{ x: number; y: number } | null>(null);
   const pendingScreenRef = useRef<{ x: number; y: number } | null>(null);
   const pendingPointerKindRef = useRef<PendingPointerKind>('idle');
-  const activePenPointerCountRef = useRef(0);
+  const activePointerTypeRef = useRef<string | null>(null);
+  const stylusSmoothRef = useRef<Map<number, StylusSmoothState>>(new Map());
 
   const getTouchCentroid = useCallback((): { x: number; y: number } | null => {
     const points = [...touchPointersRef.current.values()];
@@ -239,6 +272,7 @@ export function DrawingCanvas({
     (e: React.PointerEvent<HTMLCanvasElement>, screen: { x: number; y: number }) => {
       e.currentTarget.setPointerCapture(e.pointerId);
       activePointerRef.current = e.pointerId;
+      activePointerTypeRef.current = e.pointerType;
       modeRef.current = 'pan';
       cancelLongPress();
       engineRef.current?.beginPan(screen.x, screen.y);
@@ -265,6 +299,7 @@ export function DrawingCanvas({
       }
     }
     activePointerRef.current = null;
+    activePointerTypeRef.current = null;
     modeRef.current = 'idle';
     twoFingerPanRef.current = false;
     spacePanRef.current = false;
@@ -296,6 +331,7 @@ export function DrawingCanvas({
     ) => {
       e.currentTarget.setPointerCapture(e.pointerId);
       activePointerRef.current = e.pointerId;
+      activePointerTypeRef.current = e.pointerType;
       modeRef.current = 'long-press-wait';
       longPressClientRef.current = { x: e.clientX, y: e.clientY };
       longPressTriggeredRef.current = false;
@@ -304,11 +340,16 @@ export function DrawingCanvas({
       pendingPointerKindRef.current = kind;
       cancelLongPress();
       longPressTimerRef.current = window.setTimeout(() => {
-        if (pendingPointerKindRef.current === 'draw') return;
-
-        longPressTriggeredRef.current = true;
+        const kind = pendingPointerKindRef.current;
         const engine = engineRef.current;
         const pending = pendingMoveWorldRef.current;
+
+        if (kind === 'draw') {
+          const hit = pending && engine ? engine.hitTestSceneObjectAt(pending.x, pending.y) : null;
+          if (!hit || !isImageObject(hit)) return;
+        }
+
+        longPressTriggeredRef.current = true;
         const start = longPressClientRef.current;
         if (engine && pending) {
           engine.selectAt(pending.x, pending.y);
@@ -424,6 +465,7 @@ export function DrawingCanvas({
 
       const trimmed = draft.trim();
       if (!trimmed) {
+        if (textRepositioningRef.current) return;
         setTextEditSession(null);
         onTextEditEnd?.();
         return;
@@ -539,28 +581,36 @@ export function DrawingCanvas({
   );
 
   const syncBrushCursor = useCallback(
-    (visible: boolean) => {
+    (visible: boolean, screenPt?: { x: number; y: number }) => {
       const el = brushCursorRef.current;
       const engine = engineRef.current;
-      const pt = lastScreenPointRef.current;
+      const pt = screenPt ?? brushScreenPointRef.current;
       const dot = el?.querySelector<HTMLElement>('.brush-cursor__dot');
 
       if (!el || !dot || !useBrushOverlay) {
-        if (el) el.style.display = 'none';
+        el?.classList.remove('brush-cursor--visible');
         return;
       }
 
-      if (!visible || !pt || !engine || activePointerRef.current !== null) {
-        el.style.display = 'none';
+      const isDrawingStroke =
+        activePointerRef.current !== null && modeRef.current === 'draw';
+
+      if (!visible || !pt || !engine) {
+        el.classList.remove('brush-cursor--visible');
+        return;
+      }
+
+      // pan/select 등 다른 드래그 중에는 숨김. 그리기 중에는 활성 펜 좌표로 표시.
+      if (!isDrawingStroke && activePointerRef.current !== null) {
+        el.classList.remove('brush-cursor--visible');
         return;
       }
 
       const diameter = getBrushDiameter(engine);
 
       el.classList.toggle('brush-cursor--aim', isAimTool);
-      el.style.display = 'block';
-      el.style.left = `${pt.x}px`;
-      el.style.top = `${pt.y}px`;
+      el.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0) translate(-50%, -50%)`;
+      el.classList.add('brush-cursor--visible');
 
       const dotSize = isAimTool ? Math.max(diameter, 4) : diameter;
       dot.style.width = `${dotSize}px`;
@@ -586,6 +636,19 @@ export function DrawingCanvas({
   );
   const syncBrushCursorRef = useRef(syncBrushCursor);
   syncBrushCursorRef.current = syncBrushCursor;
+
+  const scheduleBrushCursor = useCallback((screen: { x: number; y: number }) => {
+    brushCursorPendingRef.current = screen;
+    if (brushCursorRafRef.current !== null) return;
+    brushCursorRafRef.current = requestAnimationFrame(() => {
+      brushCursorRafRef.current = null;
+      const pending = brushCursorPendingRef.current;
+      if (!pending) return;
+      syncBrushCursorRef.current(true, pending);
+    });
+  }, []);
+  const scheduleBrushCursorRef = useRef(scheduleBrushCursor);
+  scheduleBrushCursorRef.current = scheduleBrushCursor;
 
   const updateCanvasCursor = useCallback(
     (engine: DrawingEngine, world: { x: number; y: number }) => {
@@ -630,7 +693,12 @@ export function DrawingCanvas({
     (engine: DrawingEngine, world: { x: number; y: number }) => {
       if (useBrushOverlay) {
         canvasRef.current?.style.removeProperty('cursor');
-        syncBrushCursor(true);
+        const pt = brushScreenPointRef.current;
+        if (pt) {
+          scheduleBrushCursorRef.current(pt);
+        } else {
+          syncBrushCursor(true);
+        }
         return;
       }
       syncBrushCursor(false);
@@ -676,7 +744,14 @@ export function DrawingCanvas({
     });
 
     engine.setOnZoomChange(() => {
-      syncBrushCursorRef.current(true);
+      if (!useBrushOverlay) return;
+      const pt = brushScreenPointRef.current;
+      if (!pt) return;
+      const drawing =
+        activePointerRef.current !== null && modeRef.current === 'draw';
+      if (drawing || activePointerRef.current === null) {
+        syncBrushCursorRef.current(true, pt);
+      }
     });
 
     void engine.loadScene(initialPaths, initialImages, initialTexts);
@@ -732,12 +807,34 @@ export function DrawingCanvas({
       resetActivePointer();
     }
 
-    if (useBrushOverlay && lastScreenPointRef.current) {
-      syncBrushCursor(true);
-    } else {
+    if (!useBrushOverlay) {
+      brushScreenPointRef.current = null;
       syncBrushCursor(false);
+    } else {
+      const pt = brushScreenPointRef.current;
+      const drawing =
+        activePointerRef.current !== null && modeRef.current === 'draw';
+      if (pt && (drawing || activePointerRef.current === null)) {
+        syncBrushCursor(true, pt);
+      } else {
+        syncBrushCursor(false);
+      }
     }
-  }, [flushPanUpdate, resetActivePointer, syncBrushCursor, tool, useBrushOverlay, drawSettings]);
+
+    const engine = engineRef.current;
+    if (usesHoverCursor && hoverWorldRef.current && engine) {
+      updateCanvasCursorRef.current(engine, hoverWorldRef.current);
+    } else if (!usesHoverCursor) {
+      canvasRef.current?.style.removeProperty('cursor');
+    }
+  }, [
+    flushPanUpdate,
+    resetActivePointer,
+    syncBrushCursor,
+    tool,
+    useBrushOverlay,
+    usesHoverCursor,
+  ]);
 
   useEffect(() => {
     if (textEditSession) {
@@ -779,6 +876,10 @@ export function DrawingCanvas({
       if (panRafRef.current !== null) {
         cancelAnimationFrame(panRafRef.current);
         panRafRef.current = null;
+      }
+      if (brushCursorRafRef.current !== null) {
+        cancelAnimationFrame(brushCursorRafRef.current);
+        brushCursorRafRef.current = null;
       }
     };
   }, [engineRef, flushPanUpdate, resetActivePointer]);
@@ -883,6 +984,7 @@ export function DrawingCanvas({
       spacePanRef.current = false;
       e.currentTarget.setPointerCapture(e.pointerId);
       activePointerRef.current = e.pointerId;
+      activePointerTypeRef.current = e.pointerType;
       modeRef.current = 'pan';
       engine.beginPan(centroid.x, centroid.y);
       if (e.cancelable) e.preventDefault();
@@ -892,16 +994,39 @@ export function DrawingCanvas({
   );
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (textEditSession) return;
+    if (textEditSession) {
+      const draftEmpty = !textEditSession.draft.trim();
+      if (e.button === 0 && draftEmpty && textEditSession.id === null) {
+        const engine = engineRef.current;
+        if (engine) {
+          const world = toWorldPoint(e, engine);
+          textRepositioningRef.current = true;
+          setTextEditSession({
+            ...textEditSession,
+            topLeftX: world.x,
+            topLeftY: world.y,
+          });
+          window.setTimeout(() => {
+            textRepositioningRef.current = false;
+          }, 0);
+          if (e.cancelable) e.preventDefault();
+        }
+      }
+      return;
+    }
 
     const engine = engineRef.current;
     if (!engine) return;
 
-    if (e.pointerType === 'pen') {
-      activePenPointerCountRef.current += 1;
+    if (
+      activePointerRef.current !== null &&
+      e.pointerType === 'touch' &&
+      modeRef.current === 'idle'
+    ) {
+      resetActivePointer();
     }
 
-    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePenPointerCountRef.current)) return;
+    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePointerTypeRef.current)) return;
 
     if (
       e.cancelable &&
@@ -921,7 +1046,7 @@ export function DrawingCanvas({
     }
 
     if (
-      e.button === 0 &&
+      isPrimaryPointer(e) &&
       spaceHeldRef.current &&
       !textEditSession &&
       activePointerRef.current === null
@@ -933,7 +1058,7 @@ export function DrawingCanvas({
       return;
     }
 
-    if (e.button === 0 && hit && isTextObject(hit) && isDoubleClick) {
+    if (isPrimaryPointer(e) && hit && isTextObject(hit) && isDoubleClick) {
       tryOpenTextForEdit(hit);
       return;
     }
@@ -945,11 +1070,12 @@ export function DrawingCanvas({
 
     if (activePointerRef.current !== null) return;
 
-    if (e.button === 0 && (isSelectMode || isLassoMode || isTextMode)) {
+    if (isPrimaryPointer(e) && (isSelectMode || isLassoMode || isTextMode)) {
       const handle = engine.hitTestHandleAt(world.x, world.y);
       if (handle) {
         e.currentTarget.setPointerCapture(e.pointerId);
         activePointerRef.current = e.pointerId;
+        activePointerTypeRef.current = e.pointerType;
         modeRef.current = 'handle';
         activeHandleRef.current = handle;
         engine.beginHandleDrag(handle, world.x, world.y);
@@ -962,14 +1088,28 @@ export function DrawingCanvas({
       return;
     }
 
-    if (e.button === 0 && hit) {
-      if (isDrawTool(tool) && (isStylusPointer(e) || e.pointerType === 'touch')) {
+    if (isPrimaryPointer(e) && hit) {
+      const isImageHit = isImageObject(hit);
+      const directDrawOnHit = allowsDirectDrawOnHit(tool, e);
+
+      if (isImageHit && !directDrawOnHit) {
+        if (!engine.containsSelectedAt(world.x, world.y)) {
+          engine.selectAt(world.x, world.y);
+        }
+        beginContextPointer(e, world.x, world.y, 'select-move');
+        return;
+      }
+
+      if (directDrawOnHit) {
         e.currentTarget.setPointerCapture(e.pointerId);
         activePointerRef.current = e.pointerId;
+        activePointerTypeRef.current = e.pointerType;
         modeRef.current = 'draw';
         cancelLongPress();
         const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
-        engine.beginStroke(world, getDrawOptions(), TOOL_PRESETS[drawTool]);
+        const strokePoint = sampleStrokePoints(e, engine, stylusSmoothRef).at(-1) ?? world;
+        engine.beginStroke(strokePoint, getDrawOptions(), TOOL_PRESETS[drawTool]);
+        if (useBrushOverlay) syncBrushCursorRef.current(true, screen);
         return;
       }
 
@@ -999,14 +1139,28 @@ export function DrawingCanvas({
         pendingKind = 'draw';
       }
 
+      if (pendingKind === 'draw' && e.pointerType === 'touch') {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        activePointerRef.current = e.pointerId;
+        activePointerTypeRef.current = e.pointerType;
+        modeRef.current = 'draw';
+        cancelLongPress();
+        const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
+        const strokePoint = sampleStrokePoints(e, engine, stylusSmoothRef).at(-1) ?? world;
+        engine.beginStroke(strokePoint, getDrawOptions(), TOOL_PRESETS[drawTool]);
+        if (useBrushOverlay) syncBrushCursorRef.current(true, screen);
+        return;
+      }
+
       beginContextPointer(e, world.x, world.y, pendingKind);
       return;
     }
 
-    if (e.button !== 0) return;
+    if (!isPrimaryPointer(e)) return;
 
     e.currentTarget.setPointerCapture(e.pointerId);
     activePointerRef.current = e.pointerId;
+    activePointerTypeRef.current = e.pointerType;
 
     if (isHandMode) {
       twoFingerPanRef.current = false;
@@ -1035,14 +1189,16 @@ export function DrawingCanvas({
     modeRef.current = 'draw';
     const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
     const preset = TOOL_PRESETS[drawTool];
-    engine.beginStroke(world, getDrawOptions(), preset);
+    const strokePoint = sampleStrokePoints(e, engine, stylusSmoothRef).at(-1) ?? world;
+    engine.beginStroke(strokePoint, getDrawOptions(), preset);
+    if (useBrushOverlay) syncBrushCursorRef.current(true, screen);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const engine = engineRef.current;
     if (!engine) return;
 
-    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePenPointerCountRef.current)) return;
+    if (shouldIgnoreTouchForDraw(tool, e.pointerType, activePointerTypeRef.current)) return;
 
     const screen = toScreenPoint(e);
     const world = toWorldPoint(e, engine);
@@ -1051,14 +1207,41 @@ export function DrawingCanvas({
       touchPointersRef.current.set(e.pointerId, screen);
     }
 
-    lastScreenPointRef.current = { x: screen.x, y: screen.y };
+    const isActiveDrawPointer =
+      activePointerRef.current !== null &&
+      activePointerRef.current === e.pointerId &&
+      modeRef.current === 'draw';
 
-    if (activePointerRef.current === null) {
-      updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
-    } else if (useBrushOverlay) {
-      syncBrushCursorRef.current(false);
-    } else if (usesHoverCursor) {
-      updateCanvasCursorRef.current(engine, { x: world.x, y: world.y });
+    const isForeignPointerDuringDraw =
+      activePointerRef.current !== null &&
+      modeRef.current === 'draw' &&
+      e.pointerId !== activePointerRef.current;
+
+    const trackBrushPoint =
+      useBrushOverlay &&
+      (activePointerRef.current === null || isActiveDrawPointer);
+
+    if (trackBrushPoint) {
+      brushScreenPointRef.current = { x: screen.x, y: screen.y };
+    }
+
+    if (!isForeignPointerDuringDraw) {
+      if (usesHoverCursor) {
+        hoverWorldRef.current = { x: world.x, y: world.y };
+      }
+
+      const isDrawingStroke =
+        activePointerRef.current !== null && modeRef.current === 'draw';
+
+      if (activePointerRef.current === null) {
+        updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
+      } else if (useBrushOverlay && isActiveDrawPointer) {
+        scheduleBrushCursorRef.current(screen);
+      } else if (useBrushOverlay && !isDrawingStroke) {
+        syncBrushCursorRef.current(false);
+      } else if (usesHoverCursor) {
+        updateCanvasCursorRef.current(engine, { x: world.x, y: world.y });
+      }
     }
 
     if (activePointerRef.current === null) {
@@ -1094,17 +1277,18 @@ export function DrawingCanvas({
             modeRef.current = 'draw';
             const drawTool = tool === 'eraser' ? 'eraser' : isDrawSettingsTool(tool) ? tool : 'pen';
             const preset = TOOL_PRESETS[drawTool];
+            const samples = sampleStrokePoints(e, engine, stylusSmoothRef);
             engine.beginStroke(
               {
                 x: pending.x,
                 y: pending.y,
-                pressure: e.pressure,
+                pressure: samples.at(-1)?.pressure ?? e.pressure,
                 pointerType: e.pointerType,
               },
               getDrawOptions(),
               preset,
             );
-            engine.extendStroke(world);
+            engine.extendStrokePoints(samples);
           }
         }
       }
@@ -1137,7 +1321,10 @@ export function DrawingCanvas({
     }
 
     if (modeRef.current === 'draw') {
-      engine.extendStroke(world);
+      const points = sampleStrokePoints(e, engine, stylusSmoothRef);
+      if (points.length > 0) {
+        engine.extendStrokePoints(points);
+      }
     }
   };
 
@@ -1147,7 +1334,7 @@ export function DrawingCanvas({
     }
 
     if (e.pointerType === 'pen') {
-      activePenPointerCountRef.current = Math.max(0, activePenPointerCountRef.current - 1);
+      stylusSmoothRef.current.delete(e.pointerId);
     }
 
     if (activePointerRef.current !== e.pointerId) return;
@@ -1168,6 +1355,7 @@ export function DrawingCanvas({
       pendingPointerKindRef.current = 'idle';
       modeRef.current = 'idle';
       activePointerRef.current = null;
+      activePointerTypeRef.current = null;
       return;
     }
 
@@ -1187,19 +1375,32 @@ export function DrawingCanvas({
 
     modeRef.current = 'idle';
     activePointerRef.current = null;
+    activePointerTypeRef.current = null;
     twoFingerPanRef.current = false;
     spacePanRef.current = false;
 
     const screen = toScreenPoint(e);
-    lastScreenPointRef.current = { x: screen.x, y: screen.y };
     const world = engine?.screenToWorld(screen.x, screen.y);
+    if (world) {
+      hoverWorldRef.current = { x: world.x, y: world.y };
+    }
+    if (useBrushOverlay) {
+      brushScreenPointRef.current = { x: screen.x, y: screen.y };
+    }
     if (engine && world) {
       updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
     }
   };
 
-  const handlePointerLeave = () => {
-    lastScreenPointRef.current = null;
+  const handlePointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerRef.current !== null) {
+      if (activePointerRef.current === e.pointerId && useBrushOverlay) {
+        syncBrushCursor(false);
+      }
+      return;
+    }
+    brushScreenPointRef.current = null;
+    hoverWorldRef.current = null;
     syncBrushCursor(false);
     canvasRef.current?.style.removeProperty('cursor');
     cancelLongPress();
@@ -1225,9 +1426,13 @@ export function DrawingCanvas({
     if (!engine) return;
 
     const world = toWorldPoint(e, engine);
-    lastScreenPointRef.current = toScreenPoint(e);
+    const screen = toScreenPoint(e);
 
     if (activePointerRef.current === null) {
+      hoverWorldRef.current = { x: world.x, y: world.y };
+      if (useBrushOverlay) {
+        brushScreenPointRef.current = screen;
+      }
       updatePointerPresentationRef.current(engine, { x: world.x, y: world.y });
     }
   };

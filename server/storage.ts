@@ -107,3 +107,63 @@ export async function renameWhiteboard(
   await fs.writeFile(filePath(id), JSON.stringify(doc), 'utf-8');
   return doc;
 }
+
+function parseBaseTitle(title: string): string {
+  const trimmed = title.trim() || '제목 없음';
+  const numbered = trimmed.match(/ \((\d+)\)$/);
+  if (numbered) {
+    return trimmed.slice(0, -numbered[0].length);
+  }
+  if (trimmed.endsWith(' (복사)')) {
+    return trimmed.slice(0, -' (복사)'.length);
+  }
+  return trimmed;
+}
+
+function nextCopyTitle(baseTitle: string, existingTitles: string[]): string {
+  const escaped = baseTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped} \\((\\d+)\\)$`);
+
+  let maxNum = 0;
+  for (const title of existingTitles) {
+    const match = title.trim().match(pattern);
+    if (match) {
+      maxNum = Math.max(maxNum, Number.parseInt(match[1], 10));
+    }
+  }
+
+  return `${baseTitle} (${maxNum + 1})`;
+}
+
+function cloneWithNewIds<T extends { id: string }>(items: T[] | undefined): T[] {
+  if (!items?.length) return [];
+  return items.map((item) => ({ ...item, id: crypto.randomUUID() }));
+}
+
+export async function copyWhiteboard(id: string): Promise<WhiteboardDocument | null> {
+  const existing = await getWhiteboard(id);
+  if (!existing) return null;
+
+  const boards = await listWhiteboards();
+  const baseTitle = parseBaseTitle(existing.title);
+  const title = nextCopyTitle(
+    baseTitle,
+    boards.map((board) => board.title),
+  );
+
+  await ensureDataDir();
+  const now = new Date().toISOString();
+  const doc: WhiteboardDocument = {
+    id: crypto.randomUUID(),
+    title,
+    createdAt: now,
+    updatedAt: now,
+    paths: cloneWithNewIds(existing.paths),
+    images: cloneWithNewIds(existing.images),
+    texts: cloneWithNewIds(existing.texts),
+    thumbnail: existing.thumbnail,
+  };
+
+  await fs.writeFile(filePath(doc.id), JSON.stringify(doc, null, 2), 'utf-8');
+  return doc;
+}

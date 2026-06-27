@@ -3,7 +3,8 @@ import {
   ERASER_STROKE_PREVIEW_OPACITY,
 } from '../eraserSettings';
 import { pressureToWidth } from './pressure';
-import { smoothStrokePoints } from './pathObject';
+import { catmullRomSpline } from './smoothing';
+import { isAppleStylusEnvironment } from './strokeInput';
 import type { DrawingOptions, EraserMode, PathObject, StrokePoint, ToolPreset } from './types';
 function pseudoRandom(seed: number): number {
   const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
@@ -390,6 +391,16 @@ function renderLineEnds(ctx: CanvasRenderingContext2D, path: PathObject): void {
   }
 }
 
+/** 드로잉 중 실시간 프리뷰용 — 최종 저장보다 가벼운 스무딩 */
+function liveSmoothPoints(points: StrokePoint[], segments = 4): StrokePoint[] {
+  if (points.length <= 1) return [...points];
+  const apple = isAppleStylusEnvironment();
+  const twoPointSegments = apple ? 8 : 6;
+  const multiSegments = apple ? Math.max(segments, 6) : segments;
+  if (points.length === 2) return catmullRomSpline(points, twoPointSegments);
+  return catmullRomSpline(points, multiSegments);
+}
+
 /** 드로잉 중 실시간 프리뷰용 */
 export function renderLiveStroke(
   ctx: CanvasRenderingContext2D,
@@ -421,7 +432,7 @@ export function renderLiveStroke(
   if (fakePath.tool === 'highlighter') {
     renderHighlighterStroke(
       ctx,
-      smoothStrokePoints(fakePath.points),
+      liveSmoothPoints(fakePath.points),
       fakePath.color,
       fakePath.opacity,
       fakePath.baseWidth,
@@ -433,7 +444,7 @@ export function renderLiveStroke(
   if (fakePath.tool === 'eraser' && eraserMode === 'stroke') {
     renderHighlighterStroke(
       ctx,
-      smoothStrokePoints(fakePath.points),
+      liveSmoothPoints(fakePath.points),
       ERASER_STROKE_PREVIEW_COLOR,
       ERASER_STROKE_PREVIEW_OPACITY,
       fakePath.baseWidth,
@@ -445,20 +456,23 @@ export function renderLiveStroke(
   if (fakePath.tool === 'pencil') {
     renderPencilStroke(
       ctx,
-      smoothStrokePoints(fakePath.points),
+      liveSmoothPoints(fakePath.points),
       fakePath.color,
       fakePath.opacity,
       fakePath.baseWidth,
       fakePath.minWidth,
       fakePath.maxWidth,
-      fakePath.textured,
+      false,
     );
     ctx.restore();
     return;
   }
 
-  if (fakePath.points.length === 1) {
-    const p = fakePath.points[0];
+  const penPoints =
+    fakePath.tool === 'pen' ? liveSmoothPoints(fakePath.points, 5) : fakePath.points;
+
+  if (penPoints.length === 1) {
+    const p = penPoints[0];
     const w = pressureToWidth(p, fakePath.baseWidth, fakePath.minWidth, fakePath.maxWidth);
     paintDab(
       ctx,
@@ -476,9 +490,9 @@ export function renderLiveStroke(
     return;
   }
 
-  for (let i = 1; i < fakePath.points.length; i++) {
-    const from = fakePath.points[i - 1];
-    const to = fakePath.points[i];
+  for (let i = 1; i < penPoints.length; i++) {
+    const from = penPoints[i - 1];
+    const to = penPoints[i];
     const widthFrom = pressureToWidth(from, fakePath.baseWidth, fakePath.minWidth, fakePath.maxWidth);
     const widthTo = pressureToWidth(to, fakePath.baseWidth, fakePath.minWidth, fakePath.maxWidth);
     const dx = to.x - from.x;

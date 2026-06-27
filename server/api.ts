@@ -5,6 +5,7 @@ import {
   deleteWhiteboard,
   getWhiteboard,
   listWhiteboards,
+  reorderWhiteboards,
   renameWhiteboard,
   saveWhiteboard,
 } from './storage.ts';
@@ -29,6 +30,21 @@ export function createApiRouter(): Router {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to create whiteboard' });
+    }
+  });
+
+  router.put('/whiteboards/order', async (req, res) => {
+    try {
+      const { order } = req.body as { order?: string[] };
+      if (!Array.isArray(order)) {
+        res.status(400).json({ error: 'Order array required' });
+        return;
+      }
+      const boards = await reorderWhiteboards(order);
+      res.json(boards);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to reorder whiteboards' });
     }
   });
 

@@ -55,6 +55,13 @@ export function copyWhiteboard(id: string): Promise<WhiteboardDocument> {
   return request<WhiteboardDocument>(`/whiteboards/${id}/copy`, { method: 'POST' });
 }
 
+export function reorderWhiteboards(order: string[]): Promise<WhiteboardSummary[]> {
+  return request<WhiteboardSummary[]>('/whiteboards/order', {
+    method: 'PUT',
+    body: JSON.stringify({ order }),
+  });
+}
+
 export function deleteWhiteboard(id: string): Promise<void> {
   return request<void>(`/whiteboards/${id}`, { method: 'DELETE' });
 }

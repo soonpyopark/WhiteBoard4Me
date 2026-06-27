@@ -154,10 +154,23 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  cursor: grab;
 }
 
-.whiteboard-card:hover {
+.whiteboard-card--dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.whiteboard-card--drag-over {
+  box-shadow:
+    0 0 0 2px #0078d4,
+    0 3.2px 7.2px rgba(0, 0, 0, 0.13);
+  transform: translateY(-2px);
+}
+
+.whiteboard-card:hover:not(.whiteboard-card--dragging) {
   transform: translateY(-2px);
   box-shadow: 0 3.2px 7.2px rgba(0, 0, 0, 0.13), 0 0.6px 1.8px rgba(0, 0, 0, 0.11);
 }

@@ -11,6 +11,13 @@ interface WhiteboardCardProps {
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onCopy: (id: string) => void;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: (id: string) => void;
+  onDragEnd?: () => void;
+  onDragOver?: (id: string) => void;
+  onDragLeave?: () => void;
+  onDrop?: (id: string) => void;
 }
 
 function PencilIcon() {
@@ -49,6 +56,13 @@ export function WhiteboardCard({
   onDelete,
   onRename,
   onCopy,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: WhiteboardCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -97,10 +111,33 @@ export function WhiteboardCard({
 
   return (
     <>
-      <article className="whiteboard-card">
+      <article
+        className={`whiteboard-card${isDragging ? ' whiteboard-card--dragging' : ''}${isDragOver ? ' whiteboard-card--drag-over' : ''}`}
+        draggable={Boolean(onDragStart)}
+        onDragStart={(e) => {
+          if (!onDragStart) return;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', board.id);
+          onDragStart(board.id);
+        }}
+        onDragEnd={() => onDragEnd?.()}
+        onDragOver={(e) => {
+          if (!onDragOver) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          onDragOver(board.id);
+        }}
+        onDragLeave={() => onDragLeave?.()}
+        onDrop={(e) => {
+          if (!onDrop) return;
+          e.preventDefault();
+          onDrop(board.id);
+        }}
+      >
         <button
           type="button"
           className="card-preview-btn"
+          draggable={false}
           onClick={() => onOpen(board.id)}
           aria-label={`${board.title} 열기`}
         >
@@ -116,6 +153,7 @@ export function WhiteboardCard({
           <button
             type="button"
             className="card-title-btn"
+            draggable={false}
             onClick={() => onOpen(board.id)}
             title={board.title}
           >
@@ -127,6 +165,7 @@ export function WhiteboardCard({
             <button
               type="button"
               className="card-menu-btn"
+              draggable={false}
               onClick={() => setMenuOpen((v) => !v)}
               aria-label="더 보기"
               aria-expanded={menuOpen}

@@ -3,21 +3,85 @@ import path from 'path';
 import type { SaveWhiteboardPayload, WhiteboardDocument, WhiteboardSummary } from '../shared/whiteboard.ts';
 import { getDataDir } from './paths.ts';
 
+const GALLERY_ORDER_FILE = 'gallery-order.json';
+
 function filePath(id: string): string {
   return path.join(getDataDir(), `${id}.json`);
 }
 
-export async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(getDataDir(), { recursive: true });
+function galleryOrderPath(): string {
+  return path.join(getDataDir(), GALLERY_ORDER_FILE);
 }
 
-export async function listWhiteboards(): Promise<WhiteboardSummary[]> {
+function isWhiteboardFile(file: string): boolean {
+  return file.endsWith('.json') && file !== GALLERY_ORDER_FILE;
+}
+
+function sortByUpdatedDesc(a: WhiteboardSummary, b: WhiteboardSummary): number {
+  return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}
+
+async function readGalleryOrder(): Promise<string[]> {
+  try {
+    const raw = await fs.readFile(galleryOrderPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as { order?: string[] };
+    return Array.isArray(parsed.order) ? parsed.order : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeGalleryOrder(order: string[]): Promise<void> {
+  await ensureDataDir();
+  await fs.writeFile(
+    galleryOrderPath(),
+    JSON.stringify({ order }, null, 2),
+    'utf-8',
+  );
+}
+
+async function prependToGalleryOrder(id: string): Promise<void> {
+  const order = await readGalleryOrder();
+  const next = [id, ...order.filter((entry) => entry !== id)];
+  await writeGalleryOrder(next);
+}
+
+async function removeFromGalleryOrder(id: string): Promise<void> {
+  const order = await readGalleryOrder();
+  if (!order.includes(id)) return;
+  await writeGalleryOrder(order.filter((entry) => entry !== id));
+}
+
+function applyGalleryOrder(
+  summaries: WhiteboardSummary[],
+  order: string[],
+): WhiteboardSummary[] {
+  if (order.length === 0) {
+    return [...summaries].sort(sortByUpdatedDesc);
+  }
+
+  const byId = new Map(summaries.map((summary) => [summary.id, summary]));
+  const ordered: WhiteboardSummary[] = [];
+
+  for (const id of order) {
+    const summary = byId.get(id);
+    if (summary) {
+      ordered.push(summary);
+      byId.delete(id);
+    }
+  }
+
+  const remaining = [...byId.values()].sort(sortByUpdatedDesc);
+  return [...ordered, ...remaining];
+}
+
+async function loadAllSummaries(): Promise<WhiteboardSummary[]> {
   await ensureDataDir();
   const files = await fs.readdir(getDataDir());
   const summaries: WhiteboardSummary[] = [];
 
   for (const file of files) {
-    if (!file.endsWith('.json')) continue;
+    if (!isWhiteboardFile(file)) continue;
     try {
       const raw = await fs.readFile(path.join(getDataDir(), file), 'utf-8');
       const doc = JSON.parse(raw) as WhiteboardDocument;
@@ -33,9 +97,38 @@ export async function listWhiteboards(): Promise<WhiteboardSummary[]> {
     }
   }
 
-  return summaries.sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
+  return summaries;
+}
+
+export async function ensureDataDir(): Promise<void> {
+  await fs.mkdir(getDataDir(), { recursive: true });
+}
+
+export async function listWhiteboards(): Promise<WhiteboardSummary[]> {
+  const summaries = await loadAllSummaries();
+  const order = await readGalleryOrder();
+  return applyGalleryOrder(summaries, order);
+}
+
+export async function reorderWhiteboards(order: string[]): Promise<WhiteboardSummary[]> {
+  const summaries = await loadAllSummaries();
+  const ids = new Set(summaries.map((summary) => summary.id));
+  const nextOrder: string[] = [];
+
+  for (const id of order) {
+    if (ids.has(id) && !nextOrder.includes(id)) {
+      nextOrder.push(id);
+    }
+  }
+
+  for (const summary of [...summaries].sort(sortByUpdatedDesc)) {
+    if (!nextOrder.includes(summary.id)) {
+      nextOrder.push(summary.id);
+    }
+  }
+
+  await writeGalleryOrder(nextOrder);
+  return applyGalleryOrder(summaries, nextOrder);
 }
 
 export async function getWhiteboard(id: string): Promise<WhiteboardDocument | null> {
@@ -58,6 +151,7 @@ export async function createWhiteboard(): Promise<WhiteboardDocument> {
     paths: [],
   };
   await fs.writeFile(filePath(doc.id), JSON.stringify(doc, null, 2), 'utf-8');
+  await prependToGalleryOrder(doc.id);
   return doc;
 }
 
@@ -85,6 +179,7 @@ export async function saveWhiteboard(
 export async function deleteWhiteboard(id: string): Promise<boolean> {
   try {
     await fs.unlink(filePath(id));
+    await removeFromGalleryOrder(id);
     return true;
   } catch {
     return false;
@@ -165,5 +260,6 @@ export async function copyWhiteboard(id: string): Promise<WhiteboardDocument | n
   };
 
   await fs.writeFile(filePath(doc.id), JSON.stringify(doc, null, 2), 'utf-8');
+  await prependToGalleryOrder(doc.id);
   return doc;
 }

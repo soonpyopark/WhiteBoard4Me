@@ -5,8 +5,10 @@ import {
   deleteWhiteboard,
   fetchWhiteboards,
   renameWhiteboard,
+  reorderWhiteboards,
 } from '../api/whiteboards';
 import type { WhiteboardSummary } from '../types/whiteboard';
+import { moveItemById } from '../utils/reorderList';
 import { WhiteboardCard } from './WhiteboardCard';
 import { HomeButton } from './HomeButton';
 
@@ -21,6 +23,8 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -96,6 +100,37 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
     void load();
   };
 
+  const handleDragStart = (id: string) => {
+    setDraggingId(id);
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingId(null);
+    setDragOverId(null);
+  };
+
+  const handleDrop = async (targetId: string) => {
+    if (!draggingId || draggingId === targetId) {
+      handleDragEnd();
+      return;
+    }
+
+    const previous = boards;
+    const next = moveItemById(boards, draggingId, targetId);
+    setBoards(next);
+    handleDragEnd();
+
+    try {
+      setError(null);
+      const saved = await reorderWhiteboards(next.map((board) => board.id));
+      setBoards(saved);
+    } catch (err) {
+      setBoards(previous);
+      setError(err instanceof Error ? err.message : '순서 변경에 실패했습니다');
+    }
+  };
+
   return (
     <div className="gallery">
       <header className="gallery-header">
@@ -149,6 +184,13 @@ export function GalleryView({ onOpen, onCreate, onAppHome }: GalleryViewProps) {
                 onDelete={handleDelete}
                 onRename={handleRename}
                 onCopy={handleCopy}
+                isDragging={draggingId === board.id}
+                isDragOver={dragOverId === board.id && draggingId !== board.id}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={setDragOverId}
+                onDragLeave={() => setDragOverId(null)}
+                onDrop={handleDrop}
               />
             ))}
           </div>

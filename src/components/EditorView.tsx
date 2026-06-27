@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchWhiteboard, renameWhiteboard, saveWhiteboard } from '../api/whiteboards';
 import { DrawingCanvas } from './DrawingCanvas';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
+import { EditorToolStrip } from './EditorToolStrip';
 import { MadeByCredit } from './MadeByCredit';
 import { Toolbar } from './Toolbar';
 import type { TextOptionsPopoverPlacement } from './TextOptionsPopover';
@@ -419,29 +420,13 @@ export function EditorView({ whiteboardId, onBack }: EditorViewProps) {
         draftTitle={draftTitle}
         titleInputRef={titleInputRef}
         saveStatus={saveStatus}
-        tool={tool}
-        drawSettings={drawSettings}
-        eraserSettings={eraserSettings}
-        textSettings={textSettings}
-        drawOptionsOpen={drawOptionsOpen}
-        textOptionsPlacement={textOptionsPlacement}
         hasSelection={selectedIds.length > 0}
-        canUndo={canUndo}
-        canRedo={canRedo}
         onBack={() => void handleBack()}
         onStartEditTitle={startEditTitle}
         onDraftTitleChange={setDraftTitle}
         onCommitTitle={() => void commitTitle()}
         onCancelEditTitle={cancelEditTitle}
         onExportImage={handleExportImage}
-        onAttachImage={() => attachImageRef.current?.()}
-        onToolChange={handleToolChange}
-        onDrawSettingsChange={handleDrawSettingsChange}
-        onEraserSettingsChange={handleEraserSettingsChange}
-        onTextSettingsChange={handleTextSettingsChange}
-        onDrawOptionsClose={() => setDrawOptionsOpen(false)}
-        onUndo={() => void handleUndo()}
-        onRedo={() => void handleRedo()}
         onDelete={handleDelete}
         onClear={handleClearRequest}
       />
@@ -456,7 +441,26 @@ export function EditorView({ whiteboardId, onBack }: EditorViewProps) {
       />
 
       <main className="workspace">
-        <DrawingCanvas
+        <div className="whiteboard-shell">
+          <EditorToolStrip
+            tool={tool}
+            drawSettings={drawSettings}
+            eraserSettings={eraserSettings}
+            textSettings={textSettings}
+            drawOptionsOpen={drawOptionsOpen}
+            textOptionsPlacement={textOptionsPlacement}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onAttachImage={() => attachImageRef.current?.()}
+            onToolChange={handleToolChange}
+            onDrawSettingsChange={handleDrawSettingsChange}
+            onEraserSettingsChange={handleEraserSettingsChange}
+            onTextSettingsChange={handleTextSettingsChange}
+            onDrawOptionsClose={() => setDrawOptionsOpen(false)}
+            onUndo={() => void handleUndo()}
+            onRedo={() => void handleRedo()}
+          />
+          <DrawingCanvas
           key={whiteboardId}
           tool={tool}
           drawSettings={drawSettings}
@@ -478,6 +482,7 @@ export function EditorView({ whiteboardId, onBack }: EditorViewProps) {
           onTextEditStart={handleTextEditStart}
           onTextEditEnd={handleTextEditEnd}
         />
+        </div>
       </main>
 
       <MadeByCredit hint={getCanvasHint(tool)} />

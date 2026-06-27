@@ -4,7 +4,7 @@
 필압 펜 타블렛, 이미지·텍스트 삽입, 레이어 순서 조정, 자동 저장, Windows 포터블 exe 배포를 지원합니다.
 
 - **제작**: 청년안민규
-- **블로그**: [https://note4all.tistory.com](https://note4all.tistory.com)
+- **블로그**: [https://note4all.tistory.com](https://note4all.tistory.com/entry/%EC%9D%B8%ED%84%B0%EB%84%B7-%EC%97%86%EC%9D%B4%EB%8F%84-%EC%8A%A5%EC%8A%A5-%EB%82%B4-PC-%EC%95%88%EC%9D%98-%EB%98%91%EB%98%91%ED%95%9C-%EC%8A%A4%EC%BC%80%EC%B9%98%EB%B6%81-WhiteBoard4Me-v106-%EB%B0%B0%ED%8F%AC)
 - **라이선스**: [MIT License](./LICENSE)
 
 ---
@@ -154,4 +154,4 @@ npm run electron:dev  # Electron 로컬 실행 (개발용)
 
 배포·사용 관련 안내 및 업데이트는 아래 블로그에서 확인할 수 있습니다.
 
-**[https://note4all.tistory.com](https://note4all.tistory.com)**
+**[https://note4all.tistory.com](https://note4all.tistory.com/entry/%EC%9D%B8%ED%84%B0%EB%84%B7-%EC%97%86%EC%9D%B4%EB%8F%84-%EC%8A%A5%EC%8A%A5-%EB%82%B4-PC-%EC%95%88%EC%9D%98-%EB%98%91%EB%98%91%ED%95%9C-%EC%8A%A4%EC%BC%80%EC%B9%98%EB%B6%81-WhiteBoard4Me-v106-%EB%B0%B0%ED%8F%AC)**
